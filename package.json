@@ -1,0 +1,14 @@
+{
+  "name": "pageblaze",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm --workspace @pageblaze/api run dev",
+    "dev:worker": "npm --workspace @pageblaze/worker run dev",
+    "build": "npm -ws run build"
+  }
+}
