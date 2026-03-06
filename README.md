@@ -116,3 +116,7 @@ See `.env.example`:
 
 ## Product PRD
 - `PRD.md`
+
+---
+
+Signature: 🔥
