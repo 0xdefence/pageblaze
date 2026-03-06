@@ -3,11 +3,12 @@
 Open-source crawler + SEO/visual monitoring platform.
 
 ## Current Status
-Day 1 scaffold is in place:
+Day 1 scaffold + hardening pass is in place:
 - Fastify API (`apps/api`)
 - BullMQ worker (`apps/worker`)
 - Shared package (`packages/shared`)
 - Infra compose (`infra/docker-compose.yml`)
+- Deterministic smoke test (`scripts/smoke-day1.sh`)
 
 ## Monorepo Layout
 
@@ -19,6 +20,7 @@ PageBlaze/
   packages/
     shared/
   infra/
+  scripts/
   PRD.md
 ```
 
@@ -30,19 +32,22 @@ PageBlaze/
 - `POST /v1/crawl`
 - `GET /v1/jobs/:id`
 - API key auth via `x-api-key`
+- Structured validation errors (400)
+- Queue retries/backoff/timeouts
 
 ### Worker
 - Queue processing with BullMQ
 - `scrape` jobs:
   - HTTP fetch
-  - Browser fallback (Playwright)
+  - optional browser fallback (Playwright, via `BROWSER_ENABLED=true`)
   - content extraction (Readability + Turndown)
 - `crawl` jobs:
   - basic BFS crawl with depth/page limits
+- graceful shutdown handlers
 
 ### Infra
 - Redis
-- Postgres
+- Postgres (host port `55432`)
 - MinIO
 
 ## Requirements
@@ -60,9 +65,8 @@ npm install
 
 ```bash
 docker compose -f infra/docker-compose.yml up -d
+docker compose -f infra/docker-compose.yml ps
 ```
-
-> If port `5432` is already used locally, change the host-side mapping in `infra/docker-compose.yml`.
 
 ## Run API
 
@@ -76,7 +80,15 @@ npm run dev:api
 npm run dev:worker
 ```
 
-## Smoke Test
+## Smoke Test (recommended)
+
+```bash
+npm run smoke:day1
+```
+
+This script boots infra, starts API+worker, submits a scrape job, and fails fast if the job does not complete.
+
+## Manual Test
 
 Create scrape job:
 
@@ -106,6 +118,9 @@ See `.env.example`:
 - `MINIO_SECRET_KEY`
 - `MINIO_BUCKET`
 - `API_KEY`
+
+Optional:
+- `BROWSER_ENABLED` (`false` by default)
 
 ## Roadmap (Next)
 - robots/sitemap awareness

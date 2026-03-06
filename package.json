@@ -9,6 +9,13 @@
   "scripts": {
     "dev:api": "npm --workspace @pageblaze/api run dev",
     "dev:worker": "npm --workspace @pageblaze/worker run dev",
-    "build": "npm -ws run build"
+    "build": "npm -ws run build",
+    "typecheck": "npm run build",
+    "smoke:day1": "bash scripts/smoke-day1.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "tsx": "^4.19.1",
+    "typescript": "^5.5.4"
   }
 }

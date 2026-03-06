@@ -1,15 +1,22 @@
 import 'dotenv/config';
 import Fastify from 'fastify';
 import { Queue } from 'bullmq';
-import Redis from 'ioredis';
-import { z } from 'zod';
+import { ZodError, z } from 'zod';
 import { QUEUE_NAME } from '@pageblaze/shared';
 
 const app = Fastify({ logger: true });
-const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', { maxRetriesPerRequest: null });
-const queue = new Queue(QUEUE_NAME, { connection: redis });
+const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+const queue = new Queue(QUEUE_NAME, { connection: { url: redisUrl } });
 const PORT = Number(process.env.PORT || 4410);
 const API_KEY = process.env.API_KEY || 'pageblaze-dev-key';
+
+app.setErrorHandler((err, _req, reply) => {
+  if (err instanceof ZodError) {
+    return reply.status(400).send({ ok: false, error: 'validation_error', details: err.issues });
+  }
+  app.log.error(err);
+  return reply.status(500).send({ ok: false, error: 'internal_error' });
+});
 
 app.addHook('onRequest', async (req, reply) => {
   if (req.url === '/healthz') return;
@@ -26,9 +33,16 @@ const scrapeSchema = z.object({
   includeLinks: z.boolean().optional(),
 });
 
+const queueOpts = {
+  removeOnComplete: 100,
+  removeOnFail: 500,
+  attempts: 2,
+  backoff: { type: 'exponential' as const, delay: 2000 },
+};
+
 app.post('/v1/scrape', async (req, reply) => {
   const body = scrapeSchema.parse(req.body);
-  const job = await queue.add('scrape', body, { removeOnComplete: 100, removeOnFail: 500 });
+  const job = await queue.add('scrape', body, queueOpts);
   return reply.status(202).send({ ok: true, type: 'scrape', jobId: job.id });
 });
 
@@ -44,7 +58,7 @@ const crawlSchema = z.object({
 
 app.post('/v1/crawl', async (req, reply) => {
   const body = crawlSchema.parse(req.body);
-  const job = await queue.add('crawl', body, { removeOnComplete: 100, removeOnFail: 500 });
+  const job = await queue.add('crawl', body, queueOpts);
   return reply.status(202).send({ ok: true, type: 'crawl', jobId: job.id });
 });
 
@@ -65,5 +79,15 @@ app.get('/v1/jobs/:id', async (req, reply) => {
     },
   };
 });
+
+async function shutdown(signal: string) {
+  app.log.info({ signal }, 'shutting down');
+  await app.close();
+  await queue.close();
+  process.exit(0);
+}
+
+process.on('SIGINT', () => void shutdown('SIGINT'));
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 app.listen({ port: PORT, host: '0.0.0.0' }).then(() => app.log.info(`PageBlaze API on ${PORT}`));
