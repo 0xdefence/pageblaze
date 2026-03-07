@@ -31,7 +31,10 @@ PageBlaze/
 - `POST /v1/scrape`
 - `POST /v1/crawl`
 - `GET /v1/jobs/:id`
+- `GET /v1/crawls`
 - `GET /v1/crawls/:id`
+- `GET /v1/crawls/:id/pages`
+- `GET /v1/documents`
 - `GET /v1/documents/:id`
 - API key auth via `x-api-key`
 - Structured validation errors (400)
@@ -69,6 +72,11 @@ PageBlaze/
 - Crawl-time robots enforcement (`respectRobots=true`)
 - `sitemap.xml` seeding (from robots `Sitemap:` or fallback `/<host>/sitemap.xml`)
 - Crawl result now includes robots/sitemap stats
+
+### Read/query endpoints (Day 2 Block 4)
+- Crawl run listing with filters + pagination
+- Crawl pages listing endpoint with status filter + pagination
+- Documents listing endpoint with `runId` filter + pagination
 
 ### Infra
 - Redis

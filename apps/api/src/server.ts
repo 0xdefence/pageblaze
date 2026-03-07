@@ -10,6 +10,14 @@ const queue = new Queue(QUEUE_NAME, { connection: { url: redisUrl } });
 const PORT = Number(process.env.PORT || 4410);
 const API_KEY = process.env.API_KEY || 'pageblaze-dev-key';
 
+const listQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+  status: z.string().optional(),
+  type: z.enum(['scrape', 'crawl']).optional(),
+  runId: z.string().optional(),
+});
+
 app.setErrorHandler((err, _req, reply) => {
   if (err instanceof ZodError) {
     return reply.status(400).send({ ok: false, error: 'validation_error', details: err.issues });
@@ -92,13 +100,44 @@ app.get('/v1/jobs/:id', async (req, reply) => {
   };
 });
 
+app.get('/v1/crawls', async (req) => {
+  const q = listQuerySchema.parse(req.query || {});
+  const limit = q.limit ?? 20;
+  const offset = q.offset ?? 0;
+
+  const where: string[] = [];
+  const params: any[] = [];
+  if (q.status) {
+    params.push(q.status);
+    where.push(`status = $${params.length}`);
+  }
+  if (q.type) {
+    params.push(q.type);
+    where.push(`type = $${params.length}`);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  params.push(limit, offset);
+
+  const res = await db.query(
+    `SELECT id, type, start_url, status, pages_count, error, created_at, updated_at
+     FROM crawl_runs
+     ${whereSql}
+     ORDER BY created_at DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+
+  return { ok: true, crawls: res.rows, limit, offset };
+});
+
 app.get('/v1/crawls/:id', async (req, reply) => {
   const { id } = req.params as { id: string };
   const runRes = await db.query('SELECT * FROM crawl_runs WHERE id=$1', [id]);
   if (!runRes.rowCount) return reply.status(404).send({ ok: false, error: 'crawl_not_found' });
 
   const pagesRes = await db.query(
-    'SELECT id, url, depth, title, excerpt, status, error, created_at FROM crawl_pages WHERE run_id=$1 ORDER BY id ASC LIMIT 500',
+    'SELECT id, url, normalized_url, depth, title, excerpt, status, error, created_at FROM crawl_pages WHERE run_id=$1 ORDER BY id ASC LIMIT 500',
     [id]
   );
 
@@ -109,10 +148,64 @@ app.get('/v1/crawls/:id', async (req, reply) => {
   };
 });
 
+app.get('/v1/crawls/:id/pages', async (req, reply) => {
+  const { id } = req.params as { id: string };
+  const q = listQuerySchema.parse(req.query || {});
+  const limit = q.limit ?? 100;
+  const offset = q.offset ?? 0;
+
+  const runRes = await db.query('SELECT id FROM crawl_runs WHERE id=$1', [id]);
+  if (!runRes.rowCount) return reply.status(404).send({ ok: false, error: 'crawl_not_found' });
+
+  const params: any[] = [id];
+  let filter = '';
+  if (q.status) {
+    params.push(q.status);
+    filter = ` AND status = $${params.length}`;
+  }
+
+  params.push(limit, offset);
+  const res = await db.query(
+    `SELECT id, run_id, url, normalized_url, depth, title, excerpt, status, error, created_at
+     FROM crawl_pages
+     WHERE run_id=$1${filter}
+     ORDER BY id ASC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+
+  return { ok: true, pages: res.rows, limit, offset };
+});
+
+app.get('/v1/documents', async (req) => {
+  const q = listQuerySchema.parse(req.query || {});
+  const limit = q.limit ?? 20;
+  const offset = q.offset ?? 0;
+
+  const params: any[] = [];
+  let where = '';
+  if (q.runId) {
+    params.push(q.runId);
+    where = `WHERE run_id = $${params.length}`;
+  }
+
+  params.push(limit, offset);
+  const res = await db.query(
+    `SELECT id, run_id, url, normalized_url, title, excerpt, created_at
+     FROM documents
+     ${where}
+     ORDER BY id DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+
+  return { ok: true, documents: res.rows, limit, offset };
+});
+
 app.get('/v1/documents/:id', async (req, reply) => {
   const { id } = req.params as { id: string };
   const res = await db.query(
-    'SELECT id, run_id, url, title, excerpt, markdown, text_content, metadata_json, created_at FROM documents WHERE id=$1',
+    'SELECT id, run_id, url, normalized_url, title, excerpt, markdown, text_content, metadata_json, created_at FROM documents WHERE id=$1',
     [id]
   );
   if (!res.rowCount) return reply.status(404).send({ ok: false, error: 'document_not_found' });
