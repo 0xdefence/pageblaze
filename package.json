@@ -11,7 +11,8 @@
     "dev:worker": "npm --workspace @pageblaze/worker run dev",
     "build": "npm -ws run build",
     "typecheck": "npm run build",
-    "smoke:day1": "bash scripts/smoke-day1.sh"
+    "smoke:day1": "bash scripts/smoke-day1.sh",
+    "smoke:day2": "bash scripts/smoke-day2-external.sh"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",

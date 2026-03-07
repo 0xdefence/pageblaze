@@ -121,6 +121,14 @@ npm run smoke:day1
 
 This script boots infra, starts API+worker, submits a scrape job, and fails fast if the job does not complete.
 
+External + persistence smoke (Day 2):
+
+```bash
+npm run smoke:day2
+```
+
+This validates external crawl execution and persisted records via `/v1/crawls/:id`, `/v1/crawls/:id/pages`, and `/v1/documents`.
+
 ## Manual Test
 
 Create scrape job:
