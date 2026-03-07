@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "groups": [
+    {
+      "code": "schema_missing",
+      "severity": "low",
+      "issue_count": 55,
+      "affected_urls": 40,
+      "last_seen": "2026-03-07T14:00:00.000Z",
+      "sample_message": "No JSON-LD schema detected"
+    }
+  ],
+  "page": {
+    "limit": 20,
+    "offset": 0
+  }
+}

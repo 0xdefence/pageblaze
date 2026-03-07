@@ -33,7 +33,11 @@ PageBlaze/
 - `GET /v1/jobs/:id`
 - `GET /v1/stats`
 - `GET /v1/issues`
+- `GET /v1/issues/groups`
 - `GET /v1/recommendations`
+- `GET /v1/recommendations/top`
+- `GET /v1/trends/issues`
+- `GET /v1/trends/recommendations`
 - `GET /v1/crawls`
 - `GET /v1/crawls/:id`
 - `GET /v1/crawls/:id/pages`
@@ -98,6 +102,13 @@ PageBlaze/
 - Action recommendations generated per SEO issue code
 - Added `GET /v1/recommendations` endpoint with filters + pagination + counters
 
+### Analytics + top fixes (Day 3 Block 3/4)
+- Added `GET /v1/recommendations/top` for ranked "fix this first" cards
+- Added `GET /v1/issues/groups` to cluster noisy issues by code/severity
+- Added trend endpoints:
+  - `GET /v1/trends/issues`
+  - `GET /v1/trends/recommendations`
+
 ### Infra
 - Redis
 - Postgres (host port `55432`)
@@ -148,6 +159,14 @@ npm run smoke:day2
 ```
 
 This validates external crawl execution and persisted records via `/v1/crawls/:id`, `/v1/crawls/:id/pages`, and `/v1/documents`.
+
+Analytics smoke (Day 3):
+
+```bash
+npm run smoke:day3
+```
+
+This validates deterministic issue extraction, recommendation generation, and analytics endpoints (`/v1/issues`, `/v1/recommendations`, `/v1/recommendations/top`, `/v1/issues/groups`, trend endpoints, `/v1/stats`).
 
 ## Manual Test
 

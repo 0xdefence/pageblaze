@@ -381,6 +381,119 @@ app.get('/v1/recommendations', async (req) => {
   };
 });
 
+app.get('/v1/recommendations/top', async (req) => {
+  const q = listQuerySchema.parse(req.query || {});
+  const limit = q.limit ?? 10;
+
+  const params: any[] = [];
+  let where = '';
+  if (q.runId) {
+    params.push(q.runId);
+    where = `WHERE run_id = $${params.length}`;
+  }
+
+  params.push(limit);
+  const res = await db.query(
+    `SELECT id, run_id, issue_id, url, code, severity, message, action, impact_score, confidence_score, effort_score, priority_score, created_at
+     FROM recommendations
+     ${where}
+     ORDER BY priority_score DESC, created_at DESC
+     LIMIT $${params.length}`,
+    params
+  );
+
+  return { ok: true, topFixes: res.rows, limit };
+});
+
+app.get('/v1/issues/groups', async (req) => {
+  const q = listQuerySchema.parse(req.query || {});
+  const limit = q.limit ?? 20;
+  const offset = q.offset ?? 0;
+
+  const where: string[] = [];
+  const params: any[] = [];
+  if (q.runId) {
+    params.push(q.runId);
+    where.push(`run_id = $${params.length}`);
+  }
+  if (q.severity) {
+    params.push(q.severity);
+    where.push(`severity = $${params.length}`);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  params.push(limit, offset);
+  const groupsRes = await db.query(
+    `SELECT code, severity, COUNT(*)::int AS issue_count,
+            COUNT(DISTINCT normalized_url)::int AS affected_urls,
+            MAX(created_at) AS last_seen,
+            MIN(message) AS sample_message
+     FROM seo_issues
+     ${whereSql}
+     GROUP BY code, severity
+     ORDER BY issue_count DESC, affected_urls DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+
+  return { ok: true, groups: groupsRes.rows, page: { limit, offset } };
+});
+
+app.get('/v1/trends/issues', async (req) => {
+  const q = listQuerySchema.parse(req.query || {});
+  const where: string[] = [];
+  const params: any[] = [];
+
+  if (q.runId) {
+    params.push(q.runId);
+    where.push(`run_id = $${params.length}`);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  const res = await db.query(
+    `SELECT to_char(date_trunc('hour', created_at), 'YYYY-MM-DD"T"HH24:00:00"Z"') AS bucket,
+            COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE severity='critical')::int AS critical,
+            COUNT(*) FILTER (WHERE severity='high')::int AS high,
+            COUNT(*) FILTER (WHERE severity='medium')::int AS medium,
+            COUNT(*) FILTER (WHERE severity='low')::int AS low
+     FROM seo_issues
+     ${whereSql}
+     GROUP BY 1
+     ORDER BY 1 DESC
+     LIMIT 168`,
+    params
+  );
+
+  return { ok: true, buckets: res.rows };
+});
+
+app.get('/v1/trends/recommendations', async (req) => {
+  const q = listQuerySchema.parse(req.query || {});
+  const where: string[] = [];
+  const params: any[] = [];
+
+  if (q.runId) {
+    params.push(q.runId);
+    where.push(`run_id = $${params.length}`);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  const res = await db.query(
+    `SELECT to_char(date_trunc('hour', created_at), 'YYYY-MM-DD"T"HH24:00:00"Z"') AS bucket,
+            COUNT(*)::int AS total,
+            AVG(priority_score)::float8 AS avg_priority
+     FROM recommendations
+     ${whereSql}
+     GROUP BY 1
+     ORDER BY 1 DESC
+     LIMIT 168`,
+    params
+  );
+
+  return { ok: true, buckets: res.rows };
+});
+
 async function shutdown(signal: string) {
   app.log.info({ signal }, 'shutting down');
   await app.close();

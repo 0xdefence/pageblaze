@@ -27,6 +27,8 @@ done
 
 echo "[2/7] Starting API + worker"
 fuser -k 4410/tcp >/dev/null 2>&1 || true
+pkill -f '/PageBlaze/node_modules/.bin/tsx src/worker.ts' >/dev/null 2>&1 || true
+pkill -f '/PageBlaze/node_modules/.bin/tsx src/server.ts' >/dev/null 2>&1 || true
 DATABASE_URL="$DB_URL_VAL" npm run dev:api > /tmp/pageblaze-api-day2.log 2>&1 & API_PID=$!
 DATABASE_URL="$DB_URL_VAL" npm run dev:worker > /tmp/pageblaze-worker-day2.log 2>&1 & WORKER_PID=$!
 

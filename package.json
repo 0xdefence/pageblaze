@@ -12,7 +12,8 @@
     "build": "npm -ws run build",
     "typecheck": "npm run build",
     "smoke:day1": "bash scripts/smoke-day1.sh",
-    "smoke:day2": "bash scripts/smoke-day2-external.sh"
+    "smoke:day2": "bash scripts/smoke-day2-external.sh",
+    "smoke:day3": "bash scripts/smoke-day3-analytics.sh"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
