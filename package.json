@@ -9,6 +9,7 @@
   "scripts": {
     "dev:api": "npm --workspace @pageblaze/api run dev",
     "dev:worker": "npm --workspace @pageblaze/worker run dev",
+    "dev:web": "npm --workspace @pageblaze/web run dev",
     "db:migrate": "tsx scripts/db-migrate.ts",
     "build": "npm -ws run build",
     "typecheck": "npm run build",

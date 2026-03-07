@@ -17,6 +17,7 @@ PageBlaze/
   apps/
     api/
     worker/
+    web/
   packages/
     shared/
   infra/
@@ -182,6 +183,12 @@ npm run dev:api
 
 ```bash
 npm run dev:worker
+```
+
+## Run Web Dashboard (UI Block 1)
+
+```bash
+npm run dev:web
 ```
 
 ## Smoke Test (recommended)
