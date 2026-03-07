@@ -64,6 +64,12 @@ PageBlaze/
   - unique `(run_id, normalized_url)` for pages
   - unique `(run_id, url_hash)` for documents
 
+### Robots + sitemap awareness (Day 2 Block 3)
+- `robots.txt` parsing for `User-agent: *` + `Disallow`
+- Crawl-time robots enforcement (`respectRobots=true`)
+- `sitemap.xml` seeding (from robots `Sitemap:` or fallback `/<host>/sitemap.xml`)
+- Crawl result now includes robots/sitemap stats
+
 ### Infra
 - Redis
 - Postgres (host port `55432`)

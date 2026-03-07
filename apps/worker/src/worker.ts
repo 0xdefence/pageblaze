@@ -4,7 +4,17 @@ import { JSDOM } from 'jsdom';
 import TurndownService from 'turndown';
 import { Readability } from '@mozilla/readability';
 import { chromium } from 'playwright';
-import { QUEUE_NAME, db, hashUrl, initDbSchema, normalizeUrl } from '@pageblaze/shared';
+import {
+  QUEUE_NAME,
+  db,
+  extractSitemapUrls,
+  hashUrl,
+  initDbSchema,
+  isAllowedByRobots,
+  normalizeUrl,
+  parseRobotsTxt,
+  type RobotsPolicy,
+} from '@pageblaze/shared';
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const BROWSER_ENABLED = String(process.env.BROWSER_ENABLED || 'false').toLowerCase() === 'true';
@@ -74,6 +84,42 @@ async function scrapeUrl(url: string, renderMode = 'auto') {
   return { ok: true, mode, url, ...extracted };
 }
 
+async function fetchRobotsPolicy(startUrl: string): Promise<RobotsPolicy> {
+  try {
+    const u = new URL(startUrl);
+    const robotsUrl = `${u.protocol}//${u.host}/robots.txt`;
+    const txt = await fetchHttp(robotsUrl);
+    return parseRobotsTxt(txt);
+  } catch {
+    return { disallow: [], sitemapUrls: [] };
+  }
+}
+
+async function fetchSitemapSeeds(startUrl: string, policy: RobotsPolicy, max = 200): Promise<string[]> {
+  const seeds = new Set<string>();
+  const u = new URL(startUrl);
+  const candidates = policy.sitemapUrls.length ? policy.sitemapUrls : [`${u.protocol}//${u.host}/sitemap.xml`];
+
+  for (const s of candidates.slice(0, 3)) {
+    try {
+      const xml = await fetchHttp(s);
+      for (const loc of extractSitemapUrls(xml, max)) {
+        try {
+          seeds.add(normalizeUrl(loc));
+          if (seeds.size >= max) break;
+        } catch {
+          // ignore
+        }
+      }
+    } catch {
+      // ignore missing sitemap
+    }
+    if (seeds.size >= max) break;
+  }
+
+  return Array.from(seeds);
+}
+
 async function saveDocument(runId: string, url: string, depth: number, data: any) {
   const normalizedUrl = normalizeUrl(url);
   const urlHash = hashUrl(normalizedUrl);
@@ -140,13 +186,22 @@ async function handleCrawl(job: Job) {
     allowDomains,
     excludePatterns = [],
     renderMode = 'auto',
+    respectRobots = true,
   } = job.data as any;
 
-  const start = new URL(startUrl);
+  const normalizedStart = normalizeUrl(startUrl);
+  const start = new URL(normalizedStart);
   const allowed = new Set((allowDomains?.length ? allowDomains : [start.hostname]).map((d: string) => d.toLowerCase()));
+
+  const robotsPolicy = respectRobots ? await fetchRobotsPolicy(normalizedStart) : { disallow: [], sitemapUrls: [] };
+  const sitemapSeeds = await fetchSitemapSeeds(normalizedStart, robotsPolicy, Math.min(maxPages, 200));
+
   const seen = new Set<string>();
-  const q: Array<{ url: string; depth: number }> = [{ url: normalizeUrl(startUrl), depth: 0 }];
+  const q: Array<{ url: string; depth: number }> = [{ url: normalizedStart, depth: 0 }];
+  for (const s of sitemapSeeds) q.push({ url: s, depth: 0 });
+
   const items: any[] = [];
+  const blockedByRobots: string[] = [];
 
   while (q.length && items.length < maxPages) {
     const cur = q.shift()!;
@@ -157,6 +212,17 @@ async function handleCrawl(job: Job) {
     const u = new URL(normalizedCurrent);
     if (!allowed.has(u.hostname.toLowerCase())) continue;
     if (excludePatterns.some((p: string) => normalizedCurrent.includes(p))) continue;
+    if (respectRobots && !isAllowedByRobots(normalizedCurrent, robotsPolicy)) {
+      blockedByRobots.push(normalizedCurrent);
+      await db.query(
+        `INSERT INTO crawl_pages (run_id, url, normalized_url, url_hash, depth, status, error)
+         VALUES ($1, $2, $3, $4, $5, 'failed', 'robots_disallow')
+         ON CONFLICT (run_id, normalized_url)
+         DO UPDATE SET status='failed', error='robots_disallow'`,
+        [runId, normalizedCurrent, normalizedCurrent, hashUrl(normalizedCurrent), cur.depth]
+      );
+      continue;
+    }
 
     try {
       const r = await scrapeUrl(normalizedCurrent, renderMode);
@@ -190,10 +256,29 @@ async function handleCrawl(job: Job) {
     `UPDATE crawl_runs
      SET status='done', pages_count=$2, result_json=$3::jsonb, updated_at=NOW()
      WHERE id=$1`,
-    [runId, items.length, JSON.stringify({ ok: true, type: 'crawl', startUrl: normalizeUrl(startUrl), pages: items.length })]
+    [
+      runId,
+      items.length,
+      JSON.stringify({
+        ok: true,
+        type: 'crawl',
+        startUrl: normalizedStart,
+        pages: items.length,
+        robots: { respected: !!respectRobots, blocked: blockedByRobots.length },
+        sitemap: { seeds: sitemapSeeds.length },
+      }),
+    ]
   );
 
-  return { ok: true, runId, startUrl: normalizeUrl(startUrl), pages: items.length, items };
+  return {
+    ok: true,
+    runId,
+    startUrl: normalizedStart,
+    pages: items.length,
+    robots: { respected: !!respectRobots, blocked: blockedByRobots.length },
+    sitemap: { seeds: sitemapSeeds.length },
+    items,
+  };
 }
 
 const worker = new Worker(
