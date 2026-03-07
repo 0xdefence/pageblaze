@@ -143,6 +143,7 @@ PageBlaze/
 ```bash
 cp .env.example .env
 npm install
+npm run db:migrate
 ```
 
 ## Run Infra
@@ -237,6 +238,10 @@ See `.env.example`:
 
 Optional:
 - `BROWSER_ENABLED` (`false` by default)
+- `VISUAL_SCREENSHOT_ENABLED` (`false` by default)
+- `VISUAL_ARTIFACTS_DIR` (default `./artifacts/visual`)
+- `DOMAIN_DELAY_MS` (default `250`)
+- `DB_SLOW_MS` (default `250`)
 
 ## Roadmap (Next)
 - robots/sitemap awareness

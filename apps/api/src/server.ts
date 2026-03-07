@@ -2,7 +2,7 @@ import 'dotenv/config';
 import Fastify from 'fastify';
 import { Queue } from 'bullmq';
 import { ZodError, z } from 'zod';
-import { QUEUE_NAME, db, initDbSchema, normalizeUrl } from '@pageblaze/shared';
+import { QUEUE_NAME, db, normalizeUrl, verifySchema } from '@pageblaze/shared';
 
 const app = Fastify({ logger: true });
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
@@ -670,7 +670,7 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 (async () => {
-  await initDbSchema();
+  await verifySchema();
   await app.listen({ port: PORT, host: '0.0.0.0' });
   app.log.info(`PageBlaze API on ${PORT}`);
 })();

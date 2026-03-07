@@ -22,7 +22,8 @@ for i in {1..40}; do
   sleep 1
 done
 
-echo "[2/5] Start API+worker"
+echo "[2/5] Run migrations + start API+worker"
+DATABASE_URL="$DB_URL_VAL" npm run db:migrate >/tmp/pageblaze-migrate-day4.log 2>&1
 fuser -k 4410/tcp >/dev/null 2>&1 || true
 pkill -f '/PageBlaze/node_modules/.bin/tsx src/worker.ts' >/dev/null 2>&1 || true
 pkill -f '/PageBlaze/node_modules/.bin/tsx src/server.ts' >/dev/null 2>&1 || true

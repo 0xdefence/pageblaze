@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { Worker, Job } from 'bullmq';
+import { Worker, Job, UnrecoverableError } from 'bullmq';
 import { JSDOM } from 'jsdom';
 import TurndownService from 'turndown';
 import { Readability } from '@mozilla/readability';
@@ -11,7 +11,7 @@ import {
   db,
   extractSitemapUrls,
   hashUrl,
-  initDbSchema,
+  verifySchema,
   isAllowedByRobots,
   normalizeUrl,
   parseRobotsTxt,
@@ -22,6 +22,33 @@ const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const BROWSER_ENABLED = String(process.env.BROWSER_ENABLED || 'false').toLowerCase() === 'true';
 const VISUAL_SCREENSHOT_ENABLED = String(process.env.VISUAL_SCREENSHOT_ENABLED || 'false').toLowerCase() === 'true';
 const VISUAL_ARTIFACTS_DIR = process.env.VISUAL_ARTIFACTS_DIR || './artifacts/visual';
+const DOMAIN_DELAY_MS = Number(process.env.DOMAIN_DELAY_MS || 250);
+const lastRequestAtByHost = new Map<string, number>();
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function classifyRetryability(err: unknown): { retryable: boolean; code: string } {
+  const m = String((err as any)?.message || err || '').toLowerCase();
+  if (!m) return { retryable: false, code: 'unknown' };
+  if (m.includes('robots_disallow')) return { retryable: false, code: 'robots_disallow' };
+  if (m.includes('payload_too_large')) return { retryable: false, code: 'payload_too_large' };
+  if (m.includes('validation')) return { retryable: false, code: 'validation' };
+  if (m.includes('http_fetch_failed:4')) return { retryable: false, code: 'http_4xx' };
+  if (m.includes('http_fetch_failed:5')) return { retryable: true, code: 'http_5xx' };
+  if (m.includes('timeout') || m.includes('timed out') || m.includes('econnreset') || m.includes('enotfound') || m.includes('eai_again')) {
+    return { retryable: true, code: 'network_transient' };
+  }
+  return { retryable: false, code: 'other' };
+}
+
+async function throttleByHost(targetUrl: string) {
+  const host = new URL(targetUrl).host.toLowerCase();
+  const last = lastRequestAtByHost.get(host) || 0;
+  const now = Date.now();
+  const delta = now - last;
+  if (delta < DOMAIN_DELAY_MS) await sleep(DOMAIN_DELAY_MS - delta);
+  lastRequestAtByHost.set(host, Date.now());
+}
 
 async function fetchHttp(url: string): Promise<string> {
   const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(20_000) });
@@ -432,6 +459,7 @@ async function saveDocument(runId: string, url: string, depth: number, data: any
 async function handleScrape(job: Job) {
   const runId = String(job.id);
   const { url, renderMode = 'auto' } = job.data as any;
+  await throttleByHost(url);
   const result = await scrapeUrl(url, renderMode);
   const saved = await saveDocument(runId, url, 0, result);
 
@@ -493,6 +521,7 @@ async function handleCrawl(job: Job) {
     }
 
     try {
+      await throttleByHost(normalizedCurrent);
       const r = await scrapeUrl(normalizedCurrent, renderMode);
       const saved = await saveDocument(runId, normalizedCurrent, cur.depth, r);
       items.push({ url: normalizedCurrent, depth: cur.depth, title: r.title, excerpt: r.excerpt, documentId: saved.documentId });
@@ -560,10 +589,14 @@ const worker = new Worker(
       if (job.name === 'crawl') return await handleCrawl(job);
       throw new Error(`unknown_job:${job.name}`);
     } catch (err: any) {
+      const retry = classifyRetryability(err);
       await db.query(
         `UPDATE crawl_runs SET status='failed', error=$2, updated_at=NOW() WHERE id=$1`,
-        [runId, String(err?.message || err)]
+        [runId, `${retry.code}:${String(err?.message || err)}`]
       );
+      if (!retry.retryable) {
+        throw new UnrecoverableError(`${retry.code}:${String(err?.message || err)}`);
+      }
       throw err;
     }
   },
@@ -585,6 +618,6 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 (async () => {
-  await initDbSchema();
+  await verifySchema();
   console.log('PageBlaze worker started');
 })();
