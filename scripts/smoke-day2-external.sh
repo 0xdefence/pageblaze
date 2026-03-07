@@ -7,7 +7,7 @@ cd "$ROOT"
 API_KEY_VAL="${API_KEY:-pageblaze-dev-key}"
 API_URL="${API_URL:-http://127.0.0.1:4410}"
 TARGET_URL="${TARGET_URL:-https://example.com}"
-DB_URL_VAL="${DATABASE_URL:-postgresql://postgres:postgres@localhost:55432/pageblaze}"
+DB_URL_VAL="${SMOKE_DATABASE_URL:-postgresql://postgres:postgres@localhost:55432/pageblaze}"
 
 cleanup() {
   if [[ -n "${API_PID:-}" ]]; then kill "$API_PID" >/dev/null 2>&1 || true; fi

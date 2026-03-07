@@ -32,6 +32,7 @@ PageBlaze/
 - `POST /v1/crawl`
 - `GET /v1/jobs/:id`
 - `GET /v1/stats`
+- `GET /v1/issues`
 - `GET /v1/crawls`
 - `GET /v1/crawls/:id`
 - `GET /v1/crawls/:id/pages`
@@ -84,6 +85,11 @@ PageBlaze/
 - Added status counters and total pagination metadata in list endpoints
 - Added `GET /v1/stats` aggregate counters endpoint
 - Added response contracts under `docs/contracts/`
+
+### SEO issues extraction (Day 3 Block 1)
+- Added persisted `seo_issues` table with dedupe key `(run_id, url_hash, code)`
+- Worker now extracts baseline technical SEO issues per scraped page (title/meta/H1/canonical/noindex/schema/alt)
+- Added `GET /v1/issues` endpoint with filtering, pagination, and severity/code counters
 
 ### Infra
 - Redis

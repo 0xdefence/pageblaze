@@ -3,7 +3,8 @@
   "counts": {
     "runs": 12,
     "pages": 83,
-    "documents": 42
+    "documents": 42,
+    "issues": 143
   },
   "statusCounters": {
     "runs": {
@@ -15,6 +16,11 @@
     "pages": {
       "done": 78,
       "failed": 5
+    },
+    "issues": {
+      "high": 22,
+      "medium": 41,
+      "low": 80
     }
   }
 }

@@ -6,7 +6,7 @@ cd "$ROOT"
 
 API_KEY_VAL="${API_KEY:-pageblaze-dev-key}"
 API_URL="${API_URL:-http://127.0.0.1:4410}"
-DB_URL_VAL="${DATABASE_URL:-postgresql://postgres:postgres@localhost:55432/pageblaze}"
+DB_URL_VAL="${SMOKE_DATABASE_URL:-postgresql://postgres:postgres@localhost:55432/pageblaze}"
 
 cleanup() {
   if [[ -n "${API_PID:-}" ]]; then kill "$API_PID" >/dev/null 2>&1 || true; fi
@@ -25,6 +25,7 @@ for i in {1..40}; do
 done
 
 echo "[2/5] Starting API + worker"
+fuser -k 4410/tcp >/dev/null 2>&1 || true
 DATABASE_URL="$DB_URL_VAL" npm run dev:api > /tmp/pageblaze-api.log 2>&1 & API_PID=$!
 DATABASE_URL="$DB_URL_VAL" npm run dev:worker > /tmp/pageblaze-worker.log 2>&1 & WORKER_PID=$!
 

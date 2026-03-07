@@ -39,6 +39,44 @@ async function fetchBrowser(url: string): Promise<string> {
   }
 }
 
+function detectSeoIssues(doc: Document, pageUrl: string) {
+  const issues: Array<{ code: string; severity: 'critical' | 'high' | 'medium' | 'low'; message: string; evidence: any }> = [];
+
+  const title = (doc.querySelector('title')?.textContent || '').trim();
+  const metaDesc = (doc.querySelector('meta[name="description"]')?.getAttribute('content') || '').trim();
+  const canonical = (doc.querySelector('link[rel="canonical"]')?.getAttribute('href') || '').trim();
+  const h1s = Array.from(doc.querySelectorAll('h1'));
+  const robotsMeta = (doc.querySelector('meta[name="robots"]')?.getAttribute('content') || '').toLowerCase();
+  const imgsMissingAlt = Array.from(doc.querySelectorAll('img')).filter((i) => !i.getAttribute('alt')?.trim()).length;
+  const hasSchema = doc.querySelector('script[type="application/ld+json"]') !== null;
+
+  if (!title) issues.push({ code: 'title_missing', severity: 'high', message: 'Missing <title> tag', evidence: { url: pageUrl } });
+  else {
+    if (title.length < 15) issues.push({ code: 'title_too_short', severity: 'low', message: 'Title is too short', evidence: { length: title.length, title } });
+    if (title.length > 60) issues.push({ code: 'title_too_long', severity: 'low', message: 'Title is too long', evidence: { length: title.length, title } });
+  }
+
+  if (!metaDesc) issues.push({ code: 'meta_description_missing', severity: 'medium', message: 'Missing meta description', evidence: { url: pageUrl } });
+  else {
+    if (metaDesc.length < 50 || metaDesc.length > 160) {
+      issues.push({ code: 'meta_description_length', severity: 'low', message: 'Meta description length outside recommended range', evidence: { length: metaDesc.length } });
+    }
+  }
+
+  if (!canonical) issues.push({ code: 'canonical_missing', severity: 'medium', message: 'Missing canonical link', evidence: { url: pageUrl } });
+
+  if (h1s.length === 0) issues.push({ code: 'h1_missing', severity: 'high', message: 'Missing H1', evidence: { url: pageUrl } });
+  if (h1s.length > 1) issues.push({ code: 'h1_multiple', severity: 'low', message: 'Multiple H1 tags found', evidence: { count: h1s.length } });
+
+  if (robotsMeta.includes('noindex')) issues.push({ code: 'noindex_present', severity: 'medium', message: 'Page marked noindex', evidence: { robots: robotsMeta } });
+
+  if (imgsMissingAlt > 0) issues.push({ code: 'image_alt_missing', severity: 'low', message: 'Images missing alt text', evidence: { count: imgsMissingAlt } });
+
+  if (!hasSchema) issues.push({ code: 'schema_missing', severity: 'low', message: 'No JSON-LD schema detected', evidence: { url: pageUrl } });
+
+  return issues;
+}
+
 function extractContent(html: string, url: string) {
   const dom = new JSDOM(html, { url });
   const doc = dom.window.document;
@@ -51,12 +89,14 @@ function extractContent(html: string, url: string) {
     .map((a) => (a as HTMLAnchorElement).href)
     .filter(Boolean)
     .slice(0, 400);
+  const seoIssues = detectSeoIssues(doc, url);
   return {
     title: parsed?.title || doc.title || '',
     excerpt: parsed?.excerpt || '',
     markdown,
     text,
     links,
+    seoIssues,
   };
 }
 
@@ -158,7 +198,19 @@ async function saveDocument(runId: string, url: string, depth: number, data: any
     ]
   );
 
-  return { documentId: Number(doc.rows[0].id), normalizedUrl, urlHash };
+  const documentId = Number(doc.rows[0].id);
+
+  for (const issue of data.seoIssues || []) {
+    await db.query(
+      `INSERT INTO seo_issues (run_id, document_id, url, normalized_url, url_hash, code, severity, message, evidence_json)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (run_id, url_hash, code)
+       DO UPDATE SET severity=EXCLUDED.severity, message=EXCLUDED.message, evidence_json=EXCLUDED.evidence_json, document_id=EXCLUDED.document_id`,
+      [runId, documentId, url, normalizedUrl, urlHash, issue.code, issue.severity, issue.message, JSON.stringify(issue.evidence || {})]
+    );
+  }
+
+  return { documentId, normalizedUrl, urlHash, seoIssueCount: (data.seoIssues || []).length };
 }
 
 async function handleScrape(job: Job) {

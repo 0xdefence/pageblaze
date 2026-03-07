@@ -16,6 +16,8 @@ const listQuerySchema = z.object({
   status: z.string().optional(),
   type: z.enum(['scrape', 'crawl']).optional(),
   runId: z.string().optional(),
+  severity: z.enum(['critical', 'high', 'medium', 'low']).optional(),
+  code: z.string().optional(),
 });
 
 app.setErrorHandler((err, _req, reply) => {
@@ -101,12 +103,14 @@ app.get('/v1/jobs/:id', async (req, reply) => {
 });
 
 app.get('/v1/stats', async () => {
-  const [runs, pages, docs, runStatus, pageStatus] = await Promise.all([
+  const [runs, pages, docs, issues, runStatus, pageStatus, issueSeverity] = await Promise.all([
     db.query('SELECT COUNT(*)::int AS count FROM crawl_runs'),
     db.query('SELECT COUNT(*)::int AS count FROM crawl_pages'),
     db.query('SELECT COUNT(*)::int AS count FROM documents'),
+    db.query('SELECT COUNT(*)::int AS count FROM seo_issues'),
     db.query('SELECT status, COUNT(*)::int AS count FROM crawl_runs GROUP BY status'),
     db.query('SELECT status, COUNT(*)::int AS count FROM crawl_pages GROUP BY status'),
+    db.query('SELECT severity, COUNT(*)::int AS count FROM seo_issues GROUP BY severity'),
   ]);
 
   return {
@@ -115,10 +119,12 @@ app.get('/v1/stats', async () => {
       runs: runs.rows[0]?.count ?? 0,
       pages: pages.rows[0]?.count ?? 0,
       documents: docs.rows[0]?.count ?? 0,
+      issues: issues.rows[0]?.count ?? 0,
     },
     statusCounters: {
       runs: Object.fromEntries(runStatus.rows.map((r: any) => [r.status, r.count])),
       pages: Object.fromEntries(pageStatus.rows.map((r: any) => [r.status, r.count])),
+      issues: Object.fromEntries(issueSeverity.rows.map((r: any) => [r.severity, r.count])),
     },
   };
 });
@@ -261,6 +267,58 @@ app.get('/v1/documents', async (req) => {
     ok: true,
     documents: res.rows,
     page: { limit, offset, total: totalRes.rows[0]?.count ?? 0 },
+  };
+});
+
+app.get('/v1/issues', async (req) => {
+  const q = listQuerySchema.parse(req.query || {});
+  const limit = q.limit ?? 50;
+  const offset = q.offset ?? 0;
+
+  const where: string[] = [];
+  const params: any[] = [];
+
+  if (q.runId) {
+    params.push(q.runId);
+    where.push(`run_id = $${params.length}`);
+  }
+  if (q.severity) {
+    params.push(q.severity);
+    where.push(`severity = $${params.length}`);
+  }
+  if (q.code) {
+    params.push(q.code);
+    where.push(`code = $${params.length}`);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  params.push(limit, offset);
+  const issuesRes = await db.query(
+    `SELECT id, run_id, document_id, url, normalized_url, code, severity, message, evidence_json, created_at
+     FROM seo_issues
+     ${whereSql}
+     ORDER BY created_at DESC, id DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+
+  const countParams = params.slice(0, params.length - 2);
+  const totalRes = await db.query(`SELECT COUNT(*)::int AS count FROM seo_issues ${whereSql}`, countParams);
+  const sevRes = await db.query(`SELECT severity, COUNT(*)::int AS count FROM seo_issues ${whereSql} GROUP BY severity`, countParams);
+  const codeRes = await db.query(
+    `SELECT code, COUNT(*)::int AS count FROM seo_issues ${whereSql} GROUP BY code ORDER BY count DESC LIMIT 20`,
+    countParams
+  );
+
+  return {
+    ok: true,
+    issues: issuesRes.rows,
+    page: { limit, offset, total: totalRes.rows[0]?.count ?? 0 },
+    counters: {
+      bySeverity: Object.fromEntries(sevRes.rows.map((r: any) => [r.severity, r.count])),
+      topCodes: codeRes.rows,
+    },
   };
 });
 

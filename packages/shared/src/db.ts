@@ -47,13 +47,30 @@ export async function initDbSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS seo_issues (
+      id BIGSERIAL PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES crawl_runs(id) ON DELETE CASCADE,
+      document_id BIGINT REFERENCES documents(id) ON DELETE CASCADE,
+      url TEXT NOT NULL,
+      normalized_url TEXT,
+      url_hash TEXT,
+      code TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      message TEXT NOT NULL,
+      evidence_json JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     ALTER TABLE crawl_pages ADD COLUMN IF NOT EXISTS normalized_url TEXT;
     ALTER TABLE crawl_pages ADD COLUMN IF NOT EXISTS url_hash TEXT;
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS normalized_url TEXT;
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS url_hash TEXT;
+    ALTER TABLE seo_issues ADD COLUMN IF NOT EXISTS normalized_url TEXT;
+    ALTER TABLE seo_issues ADD COLUMN IF NOT EXISTS url_hash TEXT;
 
     CREATE UNIQUE INDEX IF NOT EXISTS uq_crawl_pages_run_normurl ON crawl_pages(run_id, normalized_url);
     CREATE UNIQUE INDEX IF NOT EXISTS uq_documents_run_hash ON documents(run_id, url_hash);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_seo_issues_run_hash_code ON seo_issues(run_id, url_hash, code);
 
     CREATE INDEX IF NOT EXISTS idx_crawl_runs_created_at ON crawl_runs(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_crawl_runs_status_created_at ON crawl_runs(status, created_at DESC);
@@ -63,5 +80,8 @@ export async function initDbSchema() {
     CREATE INDEX IF NOT EXISTS idx_documents_run_id ON documents(run_id);
     CREATE INDEX IF NOT EXISTS idx_documents_run_created_id ON documents(run_id, created_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_documents_url_hash ON documents(url_hash);
+    CREATE INDEX IF NOT EXISTS idx_seo_issues_run_id ON seo_issues(run_id);
+    CREATE INDEX IF NOT EXISTS idx_seo_issues_severity_created ON seo_issues(severity, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_seo_issues_code_created ON seo_issues(code, created_at DESC);
   `);
 }

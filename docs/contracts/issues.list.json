@@ -1,0 +1,33 @@
+{
+  "ok": true,
+  "issues": [
+    {
+      "id": 501,
+      "run_id": "12",
+      "document_id": 221,
+      "url": "https://example.com/",
+      "normalized_url": "https://example.com/",
+      "code": "meta_description_missing",
+      "severity": "medium",
+      "message": "Missing meta description",
+      "evidence_json": { "url": "https://example.com/" },
+      "created_at": "2026-03-07T12:10:00.000Z"
+    }
+  ],
+  "page": {
+    "limit": 50,
+    "offset": 0,
+    "total": 143
+  },
+  "counters": {
+    "bySeverity": {
+      "high": 22,
+      "medium": 41,
+      "low": 80
+    },
+    "topCodes": [
+      { "code": "schema_missing", "count": 55 },
+      { "code": "meta_description_missing", "count": 41 }
+    ]
+  }
+}
