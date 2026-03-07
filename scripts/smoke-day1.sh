@@ -6,6 +6,7 @@ cd "$ROOT"
 
 API_KEY_VAL="${API_KEY:-pageblaze-dev-key}"
 API_URL="${API_URL:-http://127.0.0.1:4410}"
+DB_URL_VAL="${DATABASE_URL:-postgresql://postgres:postgres@localhost:55432/pageblaze}"
 
 cleanup() {
   if [[ -n "${API_PID:-}" ]]; then kill "$API_PID" >/dev/null 2>&1 || true; fi
@@ -14,11 +15,18 @@ cleanup() {
 trap cleanup EXIT
 
 echo "[1/5] Starting infra"
+docker compose -f infra/docker-compose.yml down -v >/dev/null 2>&1 || true
 docker compose -f infra/docker-compose.yml up -d >/dev/null
+for i in {1..40}; do
+  if docker compose -f infra/docker-compose.yml exec -T postgres pg_isready -U postgres -d pageblaze >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
 
 echo "[2/5] Starting API + worker"
-npm run dev:api > /tmp/pageblaze-api.log 2>&1 & API_PID=$!
-npm run dev:worker > /tmp/pageblaze-worker.log 2>&1 & WORKER_PID=$!
+DATABASE_URL="$DB_URL_VAL" npm run dev:api > /tmp/pageblaze-api.log 2>&1 & API_PID=$!
+DATABASE_URL="$DB_URL_VAL" npm run dev:worker > /tmp/pageblaze-worker.log 2>&1 & WORKER_PID=$!
 
 for i in {1..30}; do
   if curl -fsS "$API_URL/healthz" >/dev/null 2>&1; then
