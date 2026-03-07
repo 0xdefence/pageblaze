@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "uptimeSec": 1234,
+  "queue": {
+    "waiting": 0,
+    "active": 1,
+    "completed": 25,
+    "failed": 2,
+    "delayed": 0
+  },
+  "dbSlowMsThreshold": 250
+}

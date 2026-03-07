@@ -9,6 +9,16 @@ const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const queue = new Queue(QUEUE_NAME, { connection: { url: redisUrl } });
 const PORT = Number(process.env.PORT || 4410);
 const API_KEY = process.env.API_KEY || 'pageblaze-dev-key';
+const STARTED_AT = Date.now();
+const DB_SLOW_MS = Number(process.env.DB_SLOW_MS || 250);
+
+async function q(sql: string, params: any[] = [], label = 'query') {
+  const t0 = Date.now();
+  const res = await db.query(sql, params);
+  const ms = Date.now() - t0;
+  if (ms >= DB_SLOW_MS) app.log.warn({ label, ms, rows: res.rowCount ?? 0 }, 'slow_db_query');
+  return res;
+}
 
 const listQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
@@ -43,16 +53,19 @@ const scrapeSchema = z.object({
   includeLinks: z.boolean().optional(),
 });
 
-const queueOpts = {
-  removeOnComplete: 100,
-  removeOnFail: 500,
-  attempts: 2,
-  backoff: { type: 'exponential' as const, delay: 2000 },
-};
+function queueOpts(kind: 'scrape' | 'crawl') {
+  return {
+    removeOnComplete: 100,
+    removeOnFail: 500,
+    attempts: kind === 'crawl' ? 2 : 3,
+    backoff: { type: 'exponential' as const, delay: kind === 'crawl' ? 3000 : 1500 },
+    timeout: kind === 'crawl' ? 120_000 : 60_000,
+  };
+}
 
 app.post('/v1/scrape', async (req, reply) => {
   const body = scrapeSchema.parse(req.body);
-  const job = await queue.add('scrape', body, queueOpts);
+  const job = await queue.add('scrape', body, queueOpts('scrape'));
   await db.query(
     `INSERT INTO crawl_runs (id, type, start_url, status)
      VALUES ($1, 'scrape', $2, 'queued')
@@ -74,7 +87,7 @@ const crawlSchema = z.object({
 
 app.post('/v1/crawl', async (req, reply) => {
   const body = crawlSchema.parse(req.body);
-  const job = await queue.add('crawl', body, queueOpts);
+  const job = await queue.add('crawl', body, queueOpts('crawl'));
   await db.query(
     `INSERT INTO crawl_runs (id, type, start_url, status)
      VALUES ($1, 'crawl', $2, 'queued')
@@ -104,17 +117,17 @@ app.get('/v1/jobs/:id', async (req, reply) => {
 
 app.get('/v1/stats', async () => {
   const [runs, pages, docs, issues, recs, snapshots, diffs, changedDiffs, runStatus, pageStatus, issueSeverity] = await Promise.all([
-    db.query('SELECT COUNT(*)::int AS count FROM crawl_runs'),
-    db.query('SELECT COUNT(*)::int AS count FROM crawl_pages'),
-    db.query('SELECT COUNT(*)::int AS count FROM documents'),
-    db.query('SELECT COUNT(*)::int AS count FROM seo_issues'),
-    db.query('SELECT COUNT(*)::int AS count FROM recommendations'),
-    db.query('SELECT COUNT(*)::int AS count FROM visual_snapshots'),
-    db.query('SELECT COUNT(*)::int AS count FROM visual_diffs'),
-    db.query('SELECT COUNT(*)::int AS count FROM visual_diffs WHERE changed = true'),
-    db.query('SELECT status, COUNT(*)::int AS count FROM crawl_runs GROUP BY status'),
-    db.query('SELECT status, COUNT(*)::int AS count FROM crawl_pages GROUP BY status'),
-    db.query('SELECT severity, COUNT(*)::int AS count FROM seo_issues GROUP BY severity'),
+    q('SELECT COUNT(*)::int AS count FROM crawl_runs', [], 'stats_runs'),
+    q('SELECT COUNT(*)::int AS count FROM crawl_pages', [], 'stats_pages'),
+    q('SELECT COUNT(*)::int AS count FROM documents', [], 'stats_docs'),
+    q('SELECT COUNT(*)::int AS count FROM seo_issues', [], 'stats_issues'),
+    q('SELECT COUNT(*)::int AS count FROM recommendations', [], 'stats_recs'),
+    q('SELECT COUNT(*)::int AS count FROM visual_snapshots', [], 'stats_visual_snapshots'),
+    q('SELECT COUNT(*)::int AS count FROM visual_diffs', [], 'stats_visual_diffs'),
+    q('SELECT COUNT(*)::int AS count FROM visual_diffs WHERE changed = true', [], 'stats_visual_changed'),
+    q('SELECT status, COUNT(*)::int AS count FROM crawl_runs GROUP BY status', [], 'stats_run_status'),
+    q('SELECT status, COUNT(*)::int AS count FROM crawl_pages GROUP BY status', [], 'stats_page_status'),
+    q('SELECT severity, COUNT(*)::int AS count FROM seo_issues GROUP BY severity', [], 'stats_issue_severity'),
   ]);
 
   return {
@@ -134,6 +147,16 @@ app.get('/v1/stats', async () => {
       pages: Object.fromEntries(pageStatus.rows.map((r: any) => [r.status, r.count])),
       issues: Object.fromEntries(issueSeverity.rows.map((r: any) => [r.severity, r.count])),
     },
+  };
+});
+
+app.get('/v1/metrics', async () => {
+  const queueCounts = await queue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed');
+  return {
+    ok: true,
+    uptimeSec: Math.floor((Date.now() - STARTED_AT) / 1000),
+    queue: queueCounts,
+    dbSlowMsThreshold: DB_SLOW_MS,
   };
 });
 
@@ -412,14 +435,14 @@ app.get('/v1/recommendations/top', async (req) => {
 });
 
 app.get('/v1/visual/snapshots', async (req) => {
-  const q = listQuerySchema.parse(req.query || {});
-  const limit = q.limit ?? 50;
-  const offset = q.offset ?? 0;
+  const qv = listQuerySchema.parse(req.query || {});
+  const limit = qv.limit ?? 50;
+  const offset = qv.offset ?? 0;
 
   const params: any[] = [];
   let where = '';
-  if (q.runId) {
-    params.push(q.runId);
+  if (qv.runId) {
+    params.push(qv.runId);
     where = `WHERE run_id = $${params.length}`;
   }
 
@@ -432,19 +455,21 @@ app.get('/v1/visual/snapshots', async (req) => {
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
   );
+  const countParams = params.slice(0, params.length - 2);
+  const totalRes = await db.query(`SELECT COUNT(*)::int AS count FROM visual_snapshots ${where}`, countParams);
 
-  return { ok: true, snapshots: res.rows, page: { limit, offset } };
+  return { ok: true, snapshots: res.rows, page: { limit, offset, total: totalRes.rows[0]?.count ?? 0 } };
 });
 
 app.get('/v1/visual/diffs', async (req) => {
-  const q = listQuerySchema.parse(req.query || {});
-  const limit = q.limit ?? 50;
-  const offset = q.offset ?? 0;
+  const qv = listQuerySchema.parse(req.query || {});
+  const limit = qv.limit ?? 50;
+  const offset = qv.offset ?? 0;
 
   const params: any[] = [];
   let where = '';
-  if (q.runId) {
-    params.push(q.runId);
+  if (qv.runId) {
+    params.push(qv.runId);
     where = `WHERE run_id = $${params.length}`;
   }
 
@@ -457,8 +482,10 @@ app.get('/v1/visual/diffs', async (req) => {
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
   );
+  const countParams = params.slice(0, params.length - 2);
+  const totalRes = await db.query(`SELECT COUNT(*)::int AS count FROM visual_diffs ${where}`, countParams);
 
-  return { ok: true, diffs: res.rows, page: { limit, offset } };
+  return { ok: true, diffs: res.rows, page: { limit, offset, total: totalRes.rows[0]?.count ?? 0 } };
 });
 
 app.get('/v1/issues/groups', async (req) => {
@@ -492,7 +519,15 @@ app.get('/v1/issues/groups', async (req) => {
     params
   );
 
-  return { ok: true, groups: groupsRes.rows, page: { limit, offset } };
+  const countParams = params.slice(0, params.length - 2);
+  const totalGroups = await db.query(
+    `SELECT COUNT(*)::int AS count FROM (
+      SELECT 1 FROM seo_issues ${whereSql} GROUP BY code, severity
+    ) t`,
+    countParams
+  );
+
+  return { ok: true, groups: groupsRes.rows, page: { limit, offset, total: totalGroups.rows[0]?.count ?? 0 } };
 });
 
 app.get('/v1/trends/issues', async (req) => {

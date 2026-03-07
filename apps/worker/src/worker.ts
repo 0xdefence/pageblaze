@@ -121,11 +121,11 @@ async function captureScreenshotArtifacts(url: string, urlHash: string) {
   }
 }
 
-async function saveVisualSnapshot(runId: string, documentId: number, url: string, normalizedUrl: string, urlHash: string, textContent: string) {
+async function saveVisualSnapshot(client: any, runId: string, documentId: number, url: string, normalizedUrl: string, urlHash: string, textContent: string) {
   const contentHash = hashUrl(textContent || '');
   const shot = await captureScreenshotArtifacts(url, urlHash);
 
-  const snapRes = await db.query(
+  const snapRes = await client.query(
     `INSERT INTO visual_snapshots (run_id, document_id, url, normalized_url, url_hash, snapshot_kind, content_hash, image_path, metadata_json)
      VALUES ($1, $2, $3, $4, $5, 'content', $6, $7, $8)
      RETURNING id`,
@@ -142,7 +142,7 @@ async function saveVisualSnapshot(runId: string, documentId: number, url: string
   );
   const snapshotId = Number(snapRes.rows[0].id);
 
-  const prevRes = await db.query(
+  const prevRes = await client.query(
     `SELECT id, content_hash, document_id, metadata_json FROM visual_snapshots
      WHERE url_hash=$1 AND id <> $2
      ORDER BY created_at DESC
@@ -161,7 +161,7 @@ async function saveVisualSnapshot(runId: string, documentId: number, url: string
     const prevMeta = prevRes.rows[0].metadata_json || {};
     let prevText = '';
     if (prevDocId) {
-      const prevDocRes = await db.query('SELECT text_content FROM documents WHERE id=$1', [prevDocId]);
+      const prevDocRes = await client.query('SELECT text_content FROM documents WHERE id=$1', [prevDocId]);
       prevText = String(prevDocRes.rows[0]?.text_content || '');
     }
 
@@ -181,7 +181,7 @@ async function saveVisualSnapshot(runId: string, documentId: number, url: string
     }
   }
 
-  await db.query(
+  await client.query(
     `INSERT INTO visual_diffs (run_id, snapshot_id, previous_snapshot_id, url, normalized_url, url_hash, diff_score, changed, summary, metadata_json)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     [
@@ -325,97 +325,108 @@ async function fetchSitemapSeeds(startUrl: string, policy: RobotsPolicy, max = 2
 async function saveDocument(runId: string, url: string, depth: number, data: any) {
   const normalizedUrl = normalizeUrl(url);
   const urlHash = hashUrl(normalizedUrl);
+  const client = await db.connect();
 
-  const page = await db.query(
-    `INSERT INTO crawl_pages (run_id, url, normalized_url, url_hash, depth, title, excerpt, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 'done')
-     ON CONFLICT (run_id, normalized_url)
-     DO UPDATE SET url=EXCLUDED.url, title=EXCLUDED.title, excerpt=EXCLUDED.excerpt, status='done', error=NULL
-     RETURNING id`,
-    [runId, url, normalizedUrl, urlHash, depth, data.title || null, data.excerpt || null]
-  );
+  try {
+    await client.query('BEGIN');
 
-  const doc = await db.query(
-    `INSERT INTO documents (run_id, url, normalized_url, url_hash, title, excerpt, markdown, text_content, metadata_json)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     ON CONFLICT (run_id, url_hash)
-     DO UPDATE SET
-      url=EXCLUDED.url,
-      title=EXCLUDED.title,
-      excerpt=EXCLUDED.excerpt,
-      markdown=EXCLUDED.markdown,
-      text_content=EXCLUDED.text_content,
-      metadata_json=EXCLUDED.metadata_json
-     RETURNING id`,
-    [
-      runId,
-      url,
-      normalizedUrl,
-      urlHash,
-      data.title || null,
-      data.excerpt || null,
-      data.markdown || '',
-      data.text || '',
-      JSON.stringify({ mode: data.mode, links: data.links?.length || 0, pageId: page.rows[0].id }),
-    ]
-  );
-
-  const documentId = Number(doc.rows[0].id);
-
-  for (const issue of data.seoIssues || []) {
-    const issueRes = await db.query(
-      `INSERT INTO seo_issues (run_id, document_id, url, normalized_url, url_hash, code, severity, message, evidence_json)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       ON CONFLICT (run_id, url_hash, code)
-       DO UPDATE SET severity=EXCLUDED.severity, message=EXCLUDED.message, evidence_json=EXCLUDED.evidence_json, document_id=EXCLUDED.document_id
+    const page = await client.query(
+      `INSERT INTO crawl_pages (run_id, url, normalized_url, url_hash, depth, title, excerpt, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'done')
+       ON CONFLICT (run_id, normalized_url)
+       DO UPDATE SET url=EXCLUDED.url, title=EXCLUDED.title, excerpt=EXCLUDED.excerpt, status='done', error=NULL
        RETURNING id`,
-      [runId, documentId, url, normalizedUrl, urlHash, issue.code, issue.severity, issue.message, JSON.stringify(issue.evidence || {})]
+      [runId, url, normalizedUrl, urlHash, depth, data.title || null, data.excerpt || null]
     );
 
-    const issueId = Number(issueRes.rows[0].id);
-    const rec = recommendationForIssue(issue.code, issue.severity, issue.message);
-
-    await db.query(
-      `INSERT INTO recommendations (run_id, issue_id, url, code, severity, message, action, impact_score, confidence_score, effort_score, priority_score)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-       ON CONFLICT (run_id, issue_id)
+    const doc = await client.query(
+      `INSERT INTO documents (run_id, url, normalized_url, url_hash, title, excerpt, markdown, text_content, metadata_json)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (run_id, url_hash)
        DO UPDATE SET
         url=EXCLUDED.url,
-        code=EXCLUDED.code,
-        severity=EXCLUDED.severity,
-        message=EXCLUDED.message,
-        action=EXCLUDED.action,
-        impact_score=EXCLUDED.impact_score,
-        confidence_score=EXCLUDED.confidence_score,
-        effort_score=EXCLUDED.effort_score,
-        priority_score=EXCLUDED.priority_score`,
+        title=EXCLUDED.title,
+        excerpt=EXCLUDED.excerpt,
+        markdown=EXCLUDED.markdown,
+        text_content=EXCLUDED.text_content,
+        metadata_json=EXCLUDED.metadata_json
+       RETURNING id`,
       [
         runId,
-        issueId,
         url,
-        issue.code,
-        issue.severity,
-        issue.message,
-        rec.action,
-        rec.impact_score,
-        rec.confidence_score,
-        rec.effort_score,
-        rec.priority_score,
+        normalizedUrl,
+        urlHash,
+        data.title || null,
+        data.excerpt || null,
+        data.markdown || '',
+        data.text || '',
+        JSON.stringify({ mode: data.mode, links: data.links?.length || 0, pageId: page.rows[0].id }),
       ]
     );
+
+    const documentId = Number(doc.rows[0].id);
+
+    for (const issue of data.seoIssues || []) {
+      const issueRes = await client.query(
+        `INSERT INTO seo_issues (run_id, document_id, url, normalized_url, url_hash, code, severity, message, evidence_json)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (run_id, url_hash, code)
+         DO UPDATE SET severity=EXCLUDED.severity, message=EXCLUDED.message, evidence_json=EXCLUDED.evidence_json, document_id=EXCLUDED.document_id
+         RETURNING id`,
+        [runId, documentId, url, normalizedUrl, urlHash, issue.code, issue.severity, issue.message, JSON.stringify(issue.evidence || {})]
+      );
+
+      const issueId = Number(issueRes.rows[0].id);
+      const rec = recommendationForIssue(issue.code, issue.severity, issue.message);
+
+      await client.query(
+        `INSERT INTO recommendations (run_id, issue_id, url, code, severity, message, action, impact_score, confidence_score, effort_score, priority_score)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         ON CONFLICT (run_id, issue_id)
+         DO UPDATE SET
+          url=EXCLUDED.url,
+          code=EXCLUDED.code,
+          severity=EXCLUDED.severity,
+          message=EXCLUDED.message,
+          action=EXCLUDED.action,
+          impact_score=EXCLUDED.impact_score,
+          confidence_score=EXCLUDED.confidence_score,
+          effort_score=EXCLUDED.effort_score,
+          priority_score=EXCLUDED.priority_score`,
+        [
+          runId,
+          issueId,
+          url,
+          issue.code,
+          issue.severity,
+          issue.message,
+          rec.action,
+          rec.impact_score,
+          rec.confidence_score,
+          rec.effort_score,
+          rec.priority_score,
+        ]
+      );
+    }
+
+    const visual = await saveVisualSnapshot(client, runId, documentId, url, normalizedUrl, urlHash, data.text || '');
+
+    await client.query('COMMIT');
+    return {
+      documentId,
+      normalizedUrl,
+      urlHash,
+      seoIssueCount: (data.seoIssues || []).length,
+      snapshotId: visual.snapshotId,
+      diffScore: visual.diffScore,
+      changed: visual.changed,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
-
-  const visual = await saveVisualSnapshot(runId, documentId, url, normalizedUrl, urlHash, data.text || '');
-
-  return {
-    documentId,
-    normalizedUrl,
-    urlHash,
-    seoIssueCount: (data.seoIssues || []).length,
-    snapshotId: visual.snapshotId,
-    diffScore: visual.diffScore,
-    changed: visual.changed,
-  };
 }
 
 async function handleScrape(job: Job) {

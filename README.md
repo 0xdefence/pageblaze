@@ -32,6 +32,7 @@ PageBlaze/
 - `POST /v1/crawl`
 - `GET /v1/jobs/:id`
 - `GET /v1/stats`
+- `GET /v1/metrics`
 - `GET /v1/issues`
 - `GET /v1/issues/groups`
 - `GET /v1/recommendations`
