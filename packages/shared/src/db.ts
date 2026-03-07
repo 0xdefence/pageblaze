@@ -52,6 +52,8 @@ export async function verifySchema() {
     'recommendations',
     'visual_snapshots',
     'visual_diffs',
+    'alert_endpoints',
+    'alert_events',
   ];
 
   const res = await db.query(

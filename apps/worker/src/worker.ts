@@ -22,6 +22,8 @@ const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const BROWSER_ENABLED = String(process.env.BROWSER_ENABLED || 'false').toLowerCase() === 'true';
 const VISUAL_SCREENSHOT_ENABLED = String(process.env.VISUAL_SCREENSHOT_ENABLED || 'false').toLowerCase() === 'true';
 const VISUAL_ARTIFACTS_DIR = process.env.VISUAL_ARTIFACTS_DIR || './artifacts/visual';
+const ALERT_PRIORITY_THRESHOLD = Number(process.env.ALERT_PRIORITY_THRESHOLD || 0.45);
+const ALERT_DIFF_THRESHOLD = Number(process.env.ALERT_DIFF_THRESHOLD || 0.3);
 const DOMAIN_DELAY_MS = Number(process.env.DOMAIN_DELAY_MS || 250);
 const lastRequestAtByHost = new Map<string, number>();
 
@@ -349,6 +351,41 @@ async function fetchSitemapSeeds(startUrl: string, policy: RobotsPolicy, max = 2
   return Array.from(seeds);
 }
 
+async function sendAlertWebhooks(runId: string, category: string, severity: 'critical' | 'high' | 'medium' | 'low', title: string, payload: any) {
+  const eps = await db.query(`SELECT id, url, secret FROM alert_endpoints WHERE enabled = true AND kind = 'webhook'`);
+  for (const ep of eps.rows) {
+    let status = 'pending';
+    let lastError: string | null = null;
+    let deliveredAt: string | null = null;
+    let attempts = 0;
+
+    try {
+      attempts = 1;
+      const headers: Record<string, string> = { 'content-type': 'application/json' };
+      if (ep.secret) headers['x-pageblaze-signature'] = ep.secret;
+      const body = JSON.stringify(payload);
+      const res = await fetch(ep.url, { method: 'POST', headers, body, signal: AbortSignal.timeout(10_000) });
+      if (res.ok) {
+        status = 'sent';
+        deliveredAt = new Date().toISOString();
+      } else {
+        status = 'failed';
+        const txt = await res.text().catch(() => '');
+        lastError = `${res.status}:${txt.slice(0, 240)}`;
+      }
+    } catch (e: any) {
+      status = 'failed';
+      lastError = String(e?.message || e);
+    }
+
+    await db.query(
+      `INSERT INTO alert_events (run_id, endpoint_id, category, severity, title, payload_json, status, attempts, last_error, delivered_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+      [runId, ep.id, category, severity, title, JSON.stringify(payload), status, attempts, lastError, deliveredAt]
+    );
+  }
+}
+
 async function saveDocument(runId: string, url: string, depth: number, data: any) {
   const normalizedUrl = normalizeUrl(url);
   const urlHash = hashUrl(normalizedUrl);
@@ -393,6 +430,8 @@ async function saveDocument(runId: string, url: string, depth: number, data: any
 
     const documentId = Number(doc.rows[0].id);
 
+    const alertQueue: Array<{ category: string; severity: 'critical' | 'high' | 'medium' | 'low'; title: string; payload: any }> = [];
+
     for (const issue of data.seoIssues || []) {
       const issueRes = await client.query(
         `INSERT INTO seo_issues (run_id, document_id, url, normalized_url, url_hash, code, severity, message, evidence_json)
@@ -434,11 +473,47 @@ async function saveDocument(runId: string, url: string, depth: number, data: any
           rec.priority_score,
         ]
       );
+
+      if (rec.priority_score >= ALERT_PRIORITY_THRESHOLD && ['critical', 'high', 'medium', 'low'].includes(issue.severity)) {
+        alertQueue.push({
+          category: 'recommendation',
+          severity: issue.severity,
+          title: `High-priority recommendation: ${issue.code}`,
+          payload: {
+            runId,
+            url,
+            code: issue.code,
+            severity: issue.severity,
+            priorityScore: rec.priority_score,
+            action: rec.action,
+          },
+        });
+      }
     }
 
     const visual = await saveVisualSnapshot(client, runId, documentId, url, normalizedUrl, urlHash, data.text || '');
 
+    if (visual.changed && visual.diffScore >= ALERT_DIFF_THRESHOLD) {
+      alertQueue.push({
+        category: 'visual_diff',
+        severity: 'medium',
+        title: 'Visual drift detected',
+        payload: {
+          runId,
+          url,
+          diffScore: visual.diffScore,
+          changed: visual.changed,
+          snapshotId: visual.snapshotId,
+        },
+      });
+    }
+
     await client.query('COMMIT');
+
+    for (const a of alertQueue) {
+      await sendAlertWebhooks(runId, a.category, a.severity, a.title, a.payload);
+    }
+
     return {
       documentId,
       normalizedUrl,
@@ -447,6 +522,7 @@ async function saveDocument(runId: string, url: string, depth: number, data: any
       snapshotId: visual.snapshotId,
       diffScore: visual.diffScore,
       changed: visual.changed,
+      alertsSent: alertQueue.length,
     };
   } catch (err) {
     await client.query('ROLLBACK');

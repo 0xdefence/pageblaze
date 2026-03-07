@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "events": [
+    {
+      "id": 101,
+      "run_id": "22",
+      "endpoint_id": 1,
+      "category": "recommendation",
+      "severity": "high",
+      "title": "High-priority recommendation: title_missing",
+      "status": "sent",
+      "attempts": 1,
+      "last_error": null,
+      "delivered_at": "2026-03-07T20:01:00.000Z",
+      "created_at": "2026-03-07T20:01:00.000Z",
+      "updated_at": "2026-03-07T20:01:00.000Z"
+    }
+  ],
+  "page": { "limit": 50, "offset": 0, "total": 1 }
+}

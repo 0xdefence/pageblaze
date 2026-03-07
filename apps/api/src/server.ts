@@ -30,6 +30,23 @@ const listQuerySchema = z.object({
   code: z.string().optional(),
 });
 
+const alertEndpointSchema = z.object({
+  kind: z.enum(['webhook']),
+  url: z.string().url(),
+  secret: z.string().optional(),
+  enabled: z.boolean().optional(),
+  metadata: z.record(z.any()).optional(),
+});
+
+async function deliverWebhook(url: string, payload: any, secret?: string) {
+  const body = JSON.stringify(payload);
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (secret) headers['x-pageblaze-signature'] = secret;
+  const res = await fetch(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(10_000) });
+  const txt = await res.text().catch(() => '');
+  return { ok: res.ok, status: res.status, bodySnippet: txt.slice(0, 300) };
+}
+
 app.setErrorHandler((err, _req, reply) => {
   if (err instanceof ZodError) {
     return reply.status(400).send({ ok: false, error: 'validation_error', details: err.issues });
@@ -158,6 +175,89 @@ app.get('/v1/metrics', async () => {
     queue: queueCounts,
     dbSlowMsThreshold: DB_SLOW_MS,
   };
+});
+
+app.post('/v1/alerts/endpoints', async (req, reply) => {
+  const body = alertEndpointSchema.parse(req.body);
+  const res = await q(
+    `INSERT INTO alert_endpoints (kind, url, secret, enabled, metadata_json)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, kind, url, enabled, metadata_json, created_at`,
+    [body.kind, body.url, body.secret || null, body.enabled ?? true, JSON.stringify(body.metadata || {})],
+    'alerts_create_endpoint'
+  );
+  return reply.status(201).send({ ok: true, endpoint: res.rows[0] });
+});
+
+app.get('/v1/alerts/endpoints', async (req) => {
+  const qv = listQuerySchema.parse(req.query || {});
+  const limit = qv.limit ?? 50;
+  const offset = qv.offset ?? 0;
+  const res = await q(
+    `SELECT id, kind, url, enabled, metadata_json, created_at
+     FROM alert_endpoints
+     ORDER BY id DESC
+     LIMIT $1 OFFSET $2`,
+    [limit, offset],
+    'alerts_list_endpoints'
+  );
+  const total = await q('SELECT COUNT(*)::int AS count FROM alert_endpoints', [], 'alerts_count_endpoints');
+  return { ok: true, endpoints: res.rows, page: { limit, offset, total: total.rows[0]?.count ?? 0 } };
+});
+
+app.get('/v1/alerts/events', async (req) => {
+  const qv = listQuerySchema.parse(req.query || {});
+  const limit = qv.limit ?? 50;
+  const offset = qv.offset ?? 0;
+
+  const where: string[] = [];
+  const params: any[] = [];
+  if (qv.runId) { params.push(qv.runId); where.push(`run_id = $${params.length}`); }
+  if (qv.status) { params.push(qv.status); where.push(`status = $${params.length}`); }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  params.push(limit, offset);
+  const res = await q(
+    `SELECT id, run_id, endpoint_id, category, severity, title, status, attempts, last_error, delivered_at, created_at, updated_at
+     FROM alert_events ${whereSql}
+     ORDER BY id DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params,
+    'alerts_list_events'
+  );
+  const countParams = params.slice(0, -2);
+  const total = await q(`SELECT COUNT(*)::int AS count FROM alert_events ${whereSql}`, countParams, 'alerts_count_events');
+  return { ok: true, events: res.rows, page: { limit, offset, total: total.rows[0]?.count ?? 0 } };
+});
+
+app.post('/v1/alerts/test', async (req, reply) => {
+  const body = z.object({ endpointId: z.number().int().optional(), url: z.string().url().optional(), payload: z.record(z.any()).optional() }).parse(req.body || {});
+  const payload = body.payload || { kind: 'pageblaze.alert.test', ts: new Date().toISOString(), message: 'test alert' };
+
+  let url = body.url;
+  let secret: string | undefined;
+  let endpointId: number | null = null;
+  if (!url && body.endpointId) {
+    const ep = await q('SELECT id, url, secret FROM alert_endpoints WHERE id=$1', [body.endpointId], 'alerts_test_endpoint_lookup');
+    if (!ep.rowCount) return reply.status(404).send({ ok: false, error: 'endpoint_not_found' });
+    endpointId = Number(ep.rows[0].id);
+    url = ep.rows[0].url;
+    secret = ep.rows[0].secret || undefined;
+  }
+  if (!url) return reply.status(400).send({ ok: false, error: 'url_or_endpointId_required' });
+
+  const sent = await deliverWebhook(url, payload, secret);
+
+  if (endpointId) {
+    await q(
+      `INSERT INTO alert_events (run_id, endpoint_id, category, severity, title, payload_json, status, attempts, last_error, delivered_at, updated_at)
+       VALUES (NULL, $1, 'test', 'low', 'manual test alert', $2, $3, 1, $4, $5, NOW())`,
+      [endpointId, JSON.stringify(payload), sent.ok ? 'sent' : 'failed', sent.ok ? null : `${sent.status}:${sent.bodySnippet}`, sent.ok ? new Date().toISOString() : null],
+      'alerts_test_event_insert'
+    );
+  }
+
+  return { ok: sent.ok, delivery: sent };
 });
 
 app.get('/v1/crawls', async (req) => {

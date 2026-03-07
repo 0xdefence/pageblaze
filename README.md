@@ -43,6 +43,10 @@ PageBlaze/
 - `GET /v1/visual/diffs`
 - `GET /v1/export/issues.csv`
 - `GET /v1/export/recommendations.csv`
+- `POST /v1/alerts/endpoints`
+- `GET /v1/alerts/endpoints`
+- `POST /v1/alerts/test`
+- `GET /v1/alerts/events`
 - `GET /v1/crawls`
 - `GET /v1/crawls/:id`
 - `GET /v1/crawls/:id/pages`
@@ -129,6 +133,16 @@ PageBlaze/
   - `GET /v1/export/issues.csv`
   - `GET /v1/export/recommendations.csv`
 
+### Day 6 alerts + routing
+- Alert endpoint registry (`alert_endpoints`) and delivery log (`alert_events`)
+- Trigger on high-priority recommendations and high visual diff drift
+- Webhook delivery with persisted status/attempt/error tracking
+- New APIs:
+  - `POST /v1/alerts/endpoints`
+  - `GET /v1/alerts/endpoints`
+  - `POST /v1/alerts/test`
+  - `GET /v1/alerts/events`
+
 ### Infra
 - Redis
 - Postgres (host port `55432`)
@@ -205,6 +219,14 @@ npm run smoke:day5
 
 This validates CSV exports and visual endpoint continuity.
 
+Alerts smoke (Day 6):
+
+```bash
+npm run smoke:day6
+```
+
+This validates webhook endpoint registration, alert event persistence, and actual webhook delivery.
+
 ## Manual Test
 
 Create scrape job:
@@ -240,6 +262,8 @@ Optional:
 - `BROWSER_ENABLED` (`false` by default)
 - `VISUAL_SCREENSHOT_ENABLED` (`false` by default)
 - `VISUAL_ARTIFACTS_DIR` (default `./artifacts/visual`)
+- `ALERT_PRIORITY_THRESHOLD` (default `0.45`)
+- `ALERT_DIFF_THRESHOLD` (default `0.30`)
 - `DOMAIN_DELAY_MS` (default `250`)
 - `DB_SLOW_MS` (default `250`)
 
