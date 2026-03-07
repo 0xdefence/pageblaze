@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import TurndownService from 'turndown';
 import { Readability } from '@mozilla/readability';
 import { chromium } from 'playwright';
-import { QUEUE_NAME, db, initDbSchema } from '@pageblaze/shared';
+import { QUEUE_NAME, db, hashUrl, initDbSchema, normalizeUrl } from '@pageblaze/shared';
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const BROWSER_ENABLED = String(process.env.BROWSER_ENABLED || 'false').toLowerCase() === 'true';
@@ -75,39 +75,60 @@ async function scrapeUrl(url: string, renderMode = 'auto') {
 }
 
 async function saveDocument(runId: string, url: string, depth: number, data: any) {
+  const normalizedUrl = normalizeUrl(url);
+  const urlHash = hashUrl(normalizedUrl);
+
   const page = await db.query(
-    `INSERT INTO crawl_pages (run_id, url, depth, title, excerpt, status)
-     VALUES ($1, $2, $3, $4, $5, 'done')
-     ON CONFLICT (run_id, url)
-     DO UPDATE SET title=EXCLUDED.title, excerpt=EXCLUDED.excerpt, status='done', error=NULL
+    `INSERT INTO crawl_pages (run_id, url, normalized_url, url_hash, depth, title, excerpt, status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'done')
+     ON CONFLICT (run_id, normalized_url)
+     DO UPDATE SET url=EXCLUDED.url, title=EXCLUDED.title, excerpt=EXCLUDED.excerpt, status='done', error=NULL
      RETURNING id`,
-    [runId, url, depth, data.title || null, data.excerpt || null]
+    [runId, url, normalizedUrl, urlHash, depth, data.title || null, data.excerpt || null]
   );
 
   const doc = await db.query(
-    `INSERT INTO documents (run_id, url, title, excerpt, markdown, text_content, metadata_json)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO documents (run_id, url, normalized_url, url_hash, title, excerpt, markdown, text_content, metadata_json)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (run_id, url_hash)
+     DO UPDATE SET
+      url=EXCLUDED.url,
+      title=EXCLUDED.title,
+      excerpt=EXCLUDED.excerpt,
+      markdown=EXCLUDED.markdown,
+      text_content=EXCLUDED.text_content,
+      metadata_json=EXCLUDED.metadata_json
      RETURNING id`,
-    [runId, url, data.title || null, data.excerpt || null, data.markdown || '', data.text || '', JSON.stringify({ mode: data.mode, links: data.links?.length || 0, pageId: page.rows[0].id })]
+    [
+      runId,
+      url,
+      normalizedUrl,
+      urlHash,
+      data.title || null,
+      data.excerpt || null,
+      data.markdown || '',
+      data.text || '',
+      JSON.stringify({ mode: data.mode, links: data.links?.length || 0, pageId: page.rows[0].id }),
+    ]
   );
 
-  return Number(doc.rows[0].id);
+  return { documentId: Number(doc.rows[0].id), normalizedUrl, urlHash };
 }
 
 async function handleScrape(job: Job) {
   const runId = String(job.id);
   const { url, renderMode = 'auto' } = job.data as any;
   const result = await scrapeUrl(url, renderMode);
-  const documentId = await saveDocument(runId, url, 0, result);
+  const saved = await saveDocument(runId, url, 0, result);
 
   await db.query(
     `UPDATE crawl_runs
      SET status='done', pages_count=1, result_json=$2::jsonb, updated_at=NOW()
      WHERE id=$1`,
-    [runId, JSON.stringify({ ok: true, type: 'scrape', url, documentId })]
+    [runId, JSON.stringify({ ok: true, type: 'scrape', url, normalizedUrl: saved.normalizedUrl, documentId: saved.documentId })]
   );
 
-  return { runId, documentId, ...result };
+  return { runId, ...saved, ...result };
 }
 
 async function handleCrawl(job: Job) {
@@ -124,28 +145,29 @@ async function handleCrawl(job: Job) {
   const start = new URL(startUrl);
   const allowed = new Set((allowDomains?.length ? allowDomains : [start.hostname]).map((d: string) => d.toLowerCase()));
   const seen = new Set<string>();
-  const q: Array<{ url: string; depth: number }> = [{ url: startUrl, depth: 0 }];
+  const q: Array<{ url: string; depth: number }> = [{ url: normalizeUrl(startUrl), depth: 0 }];
   const items: any[] = [];
 
   while (q.length && items.length < maxPages) {
     const cur = q.shift()!;
-    if (seen.has(cur.url)) continue;
-    seen.add(cur.url);
+    const normalizedCurrent = normalizeUrl(cur.url);
+    if (seen.has(normalizedCurrent)) continue;
+    seen.add(normalizedCurrent);
 
-    const u = new URL(cur.url);
+    const u = new URL(normalizedCurrent);
     if (!allowed.has(u.hostname.toLowerCase())) continue;
-    if (excludePatterns.some((p: string) => cur.url.includes(p))) continue;
+    if (excludePatterns.some((p: string) => normalizedCurrent.includes(p))) continue;
 
     try {
-      const r = await scrapeUrl(cur.url, renderMode);
-      const documentId = await saveDocument(runId, cur.url, cur.depth, r);
-      items.push({ url: cur.url, depth: cur.depth, title: r.title, excerpt: r.excerpt, documentId });
+      const r = await scrapeUrl(normalizedCurrent, renderMode);
+      const saved = await saveDocument(runId, normalizedCurrent, cur.depth, r);
+      items.push({ url: normalizedCurrent, depth: cur.depth, title: r.title, excerpt: r.excerpt, documentId: saved.documentId });
 
       if (cur.depth < maxDepth) {
         for (const l of r.links || []) {
           try {
-            const lu = new URL(l, cur.url);
-            if (allowed.has(lu.hostname.toLowerCase()) && !seen.has(lu.href)) q.push({ url: lu.href, depth: cur.depth + 1 });
+            const lu = normalizeUrl(new URL(l, normalizedCurrent).toString());
+            if (!seen.has(lu)) q.push({ url: lu, depth: cur.depth + 1 });
           } catch {
             // ignore malformed links
           }
@@ -153,11 +175,11 @@ async function handleCrawl(job: Job) {
       }
     } catch (e: any) {
       await db.query(
-        `INSERT INTO crawl_pages (run_id, url, depth, status, error)
-         VALUES ($1, $2, $3, 'failed', $4)
-         ON CONFLICT (run_id, url)
+        `INSERT INTO crawl_pages (run_id, url, normalized_url, url_hash, depth, status, error)
+         VALUES ($1, $2, $3, $4, $5, 'failed', $6)
+         ON CONFLICT (run_id, normalized_url)
          DO UPDATE SET status='failed', error=EXCLUDED.error`,
-        [runId, cur.url, cur.depth, String(e?.message || e)]
+        [runId, normalizedCurrent, normalizedCurrent, hashUrl(normalizedCurrent), cur.depth, String(e?.message || e)]
       );
     }
 
@@ -168,10 +190,10 @@ async function handleCrawl(job: Job) {
     `UPDATE crawl_runs
      SET status='done', pages_count=$2, result_json=$3::jsonb, updated_at=NOW()
      WHERE id=$1`,
-    [runId, items.length, JSON.stringify({ ok: true, type: 'crawl', startUrl, pages: items.length })]
+    [runId, items.length, JSON.stringify({ ok: true, type: 'crawl', startUrl: normalizeUrl(startUrl), pages: items.length })]
   );
 
-  return { ok: true, runId, startUrl, pages: items.length, items };
+  return { ok: true, runId, startUrl: normalizeUrl(startUrl), pages: items.length, items };
 }
 
 const worker = new Worker(

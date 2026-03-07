@@ -22,6 +22,8 @@ export async function initDbSchema() {
       id BIGSERIAL PRIMARY KEY,
       run_id TEXT NOT NULL REFERENCES crawl_runs(id) ON DELETE CASCADE,
       url TEXT NOT NULL,
+      normalized_url TEXT,
+      url_hash TEXT,
       depth INTEGER NOT NULL DEFAULT 0,
       title TEXT,
       excerpt TEXT,
@@ -35,6 +37,8 @@ export async function initDbSchema() {
       id BIGSERIAL PRIMARY KEY,
       run_id TEXT NOT NULL REFERENCES crawl_runs(id) ON DELETE CASCADE,
       url TEXT NOT NULL,
+      normalized_url TEXT,
+      url_hash TEXT,
       title TEXT,
       excerpt TEXT,
       markdown TEXT,
@@ -43,8 +47,17 @@ export async function initDbSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    ALTER TABLE crawl_pages ADD COLUMN IF NOT EXISTS normalized_url TEXT;
+    ALTER TABLE crawl_pages ADD COLUMN IF NOT EXISTS url_hash TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS normalized_url TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS url_hash TEXT;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_crawl_pages_run_normurl ON crawl_pages(run_id, normalized_url);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_documents_run_hash ON documents(run_id, url_hash);
+
     CREATE INDEX IF NOT EXISTS idx_crawl_runs_created_at ON crawl_runs(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_crawl_pages_run_id ON crawl_pages(run_id);
     CREATE INDEX IF NOT EXISTS idx_documents_run_id ON documents(run_id);
+    CREATE INDEX IF NOT EXISTS idx_documents_url_hash ON documents(url_hash);
   `);
 }

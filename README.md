@@ -56,6 +56,14 @@ PageBlaze/
 - Job lifecycle persisted (`queued` → `running` → `done/failed`)
 - Scrape/crawl outputs stored as queryable documents/pages
 
+### Normalization + dedupe (Day 2 Block 2)
+- URL normalization (lowercase host, strip hash, remove tracking params, sort query params)
+- URL hashing (`sha256`) for stable dedupe keys
+- De-dupe in crawl queue by normalized URL
+- DB-level dedupe:
+  - unique `(run_id, normalized_url)` for pages
+  - unique `(run_id, url_hash)` for documents
+
 ### Infra
 - Redis
 - Postgres (host port `55432`)

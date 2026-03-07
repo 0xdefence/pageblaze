@@ -2,7 +2,7 @@ import 'dotenv/config';
 import Fastify from 'fastify';
 import { Queue } from 'bullmq';
 import { ZodError, z } from 'zod';
-import { QUEUE_NAME, db, initDbSchema } from '@pageblaze/shared';
+import { QUEUE_NAME, db, initDbSchema, normalizeUrl } from '@pageblaze/shared';
 
 const app = Fastify({ logger: true });
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
@@ -47,7 +47,7 @@ app.post('/v1/scrape', async (req, reply) => {
     `INSERT INTO crawl_runs (id, type, start_url, status)
      VALUES ($1, 'scrape', $2, 'queued')
      ON CONFLICT (id) DO NOTHING`,
-    [String(job.id), body.url]
+    [String(job.id), normalizeUrl(body.url)]
   );
   return reply.status(202).send({ ok: true, type: 'scrape', jobId: job.id });
 });
@@ -69,7 +69,7 @@ app.post('/v1/crawl', async (req, reply) => {
     `INSERT INTO crawl_runs (id, type, start_url, status)
      VALUES ($1, 'crawl', $2, 'queued')
      ON CONFLICT (id) DO NOTHING`,
-    [String(job.id), body.startUrl]
+    [String(job.id), normalizeUrl(body.startUrl)]
   );
   return reply.status(202).send({ ok: true, type: 'crawl', jobId: job.id });
 });
