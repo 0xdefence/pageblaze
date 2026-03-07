@@ -39,6 +39,39 @@ async function fetchBrowser(url: string): Promise<string> {
   }
 }
 
+function recommendationForIssue(code: string, severity: 'critical' | 'high' | 'medium' | 'low', message: string) {
+  const impactMap: Record<string, number> = { critical: 1.0, high: 0.85, medium: 0.6, low: 0.35 };
+  const defaults = { action: 'Review and fix this issue', impact: impactMap[severity], confidence: 0.75, effort: 0.6 };
+
+  const byCode: Record<string, { action: string; impact?: number; confidence?: number; effort?: number }> = {
+    title_missing: { action: 'Add a unique descriptive <title> tag', impact: 0.9, confidence: 0.9, effort: 0.3 },
+    title_too_short: { action: 'Expand title to be descriptive (15-60 chars)', impact: 0.45, confidence: 0.8, effort: 0.2 },
+    title_too_long: { action: 'Trim title to ~60 characters', impact: 0.35, confidence: 0.8, effort: 0.2 },
+    meta_description_missing: { action: 'Add meta description (50-160 chars)', impact: 0.55, confidence: 0.8, effort: 0.25 },
+    meta_description_length: { action: 'Adjust meta description length to recommended range', impact: 0.3, confidence: 0.75, effort: 0.2 },
+    canonical_missing: { action: 'Set canonical URL for page', impact: 0.7, confidence: 0.85, effort: 0.3 },
+    h1_missing: { action: 'Add one clear H1 heading', impact: 0.65, confidence: 0.85, effort: 0.25 },
+    h1_multiple: { action: 'Reduce to a single primary H1', impact: 0.3, confidence: 0.75, effort: 0.2 },
+    noindex_present: { action: 'Remove noindex if page should rank', impact: 0.8, confidence: 0.85, effort: 0.25 },
+    image_alt_missing: { action: 'Add alt text to images', impact: 0.25, confidence: 0.7, effort: 0.35 },
+    schema_missing: { action: 'Add relevant JSON-LD structured data', impact: 0.4, confidence: 0.7, effort: 0.5 },
+  };
+
+  const c = byCode[code] || { action: message };
+  const impact = c.impact ?? defaults.impact;
+  const confidence = c.confidence ?? defaults.confidence;
+  const effort = c.effort ?? defaults.effort;
+  const priority = Number((impact * confidence * (1 - effort)).toFixed(4));
+
+  return {
+    action: c.action || defaults.action,
+    impact_score: impact,
+    confidence_score: confidence,
+    effort_score: effort,
+    priority_score: priority,
+  };
+}
+
 function detectSeoIssues(doc: Document, pageUrl: string) {
   const issues: Array<{ code: string; severity: 'critical' | 'high' | 'medium' | 'low'; message: string; evidence: any }> = [];
 
@@ -201,12 +234,45 @@ async function saveDocument(runId: string, url: string, depth: number, data: any
   const documentId = Number(doc.rows[0].id);
 
   for (const issue of data.seoIssues || []) {
-    await db.query(
+    const issueRes = await db.query(
       `INSERT INTO seo_issues (run_id, document_id, url, normalized_url, url_hash, code, severity, message, evidence_json)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (run_id, url_hash, code)
-       DO UPDATE SET severity=EXCLUDED.severity, message=EXCLUDED.message, evidence_json=EXCLUDED.evidence_json, document_id=EXCLUDED.document_id`,
+       DO UPDATE SET severity=EXCLUDED.severity, message=EXCLUDED.message, evidence_json=EXCLUDED.evidence_json, document_id=EXCLUDED.document_id
+       RETURNING id`,
       [runId, documentId, url, normalizedUrl, urlHash, issue.code, issue.severity, issue.message, JSON.stringify(issue.evidence || {})]
+    );
+
+    const issueId = Number(issueRes.rows[0].id);
+    const rec = recommendationForIssue(issue.code, issue.severity, issue.message);
+
+    await db.query(
+      `INSERT INTO recommendations (run_id, issue_id, url, code, severity, message, action, impact_score, confidence_score, effort_score, priority_score)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       ON CONFLICT (run_id, issue_id)
+       DO UPDATE SET
+        url=EXCLUDED.url,
+        code=EXCLUDED.code,
+        severity=EXCLUDED.severity,
+        message=EXCLUDED.message,
+        action=EXCLUDED.action,
+        impact_score=EXCLUDED.impact_score,
+        confidence_score=EXCLUDED.confidence_score,
+        effort_score=EXCLUDED.effort_score,
+        priority_score=EXCLUDED.priority_score`,
+      [
+        runId,
+        issueId,
+        url,
+        issue.code,
+        issue.severity,
+        issue.message,
+        rec.action,
+        rec.impact_score,
+        rec.confidence_score,
+        rec.effort_score,
+        rec.priority_score,
+      ]
     );
   }
 

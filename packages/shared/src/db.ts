@@ -61,6 +61,22 @@ export async function initDbSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS recommendations (
+      id BIGSERIAL PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES crawl_runs(id) ON DELETE CASCADE,
+      issue_id BIGINT REFERENCES seo_issues(id) ON DELETE SET NULL,
+      url TEXT NOT NULL,
+      code TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      message TEXT NOT NULL,
+      action TEXT NOT NULL,
+      impact_score REAL NOT NULL,
+      confidence_score REAL NOT NULL,
+      effort_score REAL NOT NULL,
+      priority_score REAL NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     ALTER TABLE crawl_pages ADD COLUMN IF NOT EXISTS normalized_url TEXT;
     ALTER TABLE crawl_pages ADD COLUMN IF NOT EXISTS url_hash TEXT;
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS normalized_url TEXT;
@@ -83,5 +99,8 @@ export async function initDbSchema() {
     CREATE INDEX IF NOT EXISTS idx_seo_issues_run_id ON seo_issues(run_id);
     CREATE INDEX IF NOT EXISTS idx_seo_issues_severity_created ON seo_issues(severity, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_seo_issues_code_created ON seo_issues(code, created_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_recommendations_run_issue ON recommendations(run_id, issue_id);
+    CREATE INDEX IF NOT EXISTS idx_recommendations_run_priority ON recommendations(run_id, priority_score DESC);
+    CREATE INDEX IF NOT EXISTS idx_recommendations_code_priority ON recommendations(code, priority_score DESC);
   `);
 }

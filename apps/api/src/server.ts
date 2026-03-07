@@ -103,11 +103,12 @@ app.get('/v1/jobs/:id', async (req, reply) => {
 });
 
 app.get('/v1/stats', async () => {
-  const [runs, pages, docs, issues, runStatus, pageStatus, issueSeverity] = await Promise.all([
+  const [runs, pages, docs, issues, recs, runStatus, pageStatus, issueSeverity] = await Promise.all([
     db.query('SELECT COUNT(*)::int AS count FROM crawl_runs'),
     db.query('SELECT COUNT(*)::int AS count FROM crawl_pages'),
     db.query('SELECT COUNT(*)::int AS count FROM documents'),
     db.query('SELECT COUNT(*)::int AS count FROM seo_issues'),
+    db.query('SELECT COUNT(*)::int AS count FROM recommendations'),
     db.query('SELECT status, COUNT(*)::int AS count FROM crawl_runs GROUP BY status'),
     db.query('SELECT status, COUNT(*)::int AS count FROM crawl_pages GROUP BY status'),
     db.query('SELECT severity, COUNT(*)::int AS count FROM seo_issues GROUP BY severity'),
@@ -120,6 +121,7 @@ app.get('/v1/stats', async () => {
       pages: pages.rows[0]?.count ?? 0,
       documents: docs.rows[0]?.count ?? 0,
       issues: issues.rows[0]?.count ?? 0,
+      recommendations: recs.rows[0]?.count ?? 0,
     },
     statusCounters: {
       runs: Object.fromEntries(runStatus.rows.map((r: any) => [r.status, r.count])),
@@ -330,6 +332,53 @@ app.get('/v1/documents/:id', async (req, reply) => {
   );
   if (!res.rowCount) return reply.status(404).send({ ok: false, error: 'document_not_found' });
   return { ok: true, document: res.rows[0] };
+});
+
+app.get('/v1/recommendations', async (req) => {
+  const q = listQuerySchema.parse(req.query || {});
+  const limit = q.limit ?? 50;
+  const offset = q.offset ?? 0;
+
+  const where: string[] = [];
+  const params: any[] = [];
+
+  if (q.runId) {
+    params.push(q.runId);
+    where.push(`run_id = $${params.length}`);
+  }
+  if (q.severity) {
+    params.push(q.severity);
+    where.push(`severity = $${params.length}`);
+  }
+  if (q.code) {
+    params.push(q.code);
+    where.push(`code = $${params.length}`);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  params.push(limit, offset);
+  const recRes = await db.query(
+    `SELECT id, run_id, issue_id, url, code, severity, message, action, impact_score, confidence_score, effort_score, priority_score, created_at
+     FROM recommendations
+     ${whereSql}
+     ORDER BY priority_score DESC, created_at DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+
+  const countParams = params.slice(0, params.length - 2);
+  const totalRes = await db.query(`SELECT COUNT(*)::int AS count FROM recommendations ${whereSql}`, countParams);
+  const sevRes = await db.query(`SELECT severity, COUNT(*)::int AS count FROM recommendations ${whereSql} GROUP BY severity`, countParams);
+
+  return {
+    ok: true,
+    recommendations: recRes.rows,
+    page: { limit, offset, total: totalRes.rows[0]?.count ?? 0 },
+    counters: {
+      bySeverity: Object.fromEntries(sevRes.rows.map((r: any) => [r.severity, r.count])),
+    },
+  };
 });
 
 async function shutdown(signal: string) {

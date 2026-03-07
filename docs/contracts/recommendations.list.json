@@ -1,0 +1,32 @@
+{
+  "ok": true,
+  "recommendations": [
+    {
+      "id": 901,
+      "run_id": "14",
+      "issue_id": 502,
+      "url": "https://example.com/",
+      "code": "title_missing",
+      "severity": "high",
+      "message": "Missing <title> tag",
+      "action": "Add a unique descriptive <title> tag",
+      "impact_score": 0.9,
+      "confidence_score": 0.9,
+      "effort_score": 0.3,
+      "priority_score": 0.567,
+      "created_at": "2026-03-07T13:20:00.000Z"
+    }
+  ],
+  "page": {
+    "limit": 50,
+    "offset": 0,
+    "total": 180
+  },
+  "counters": {
+    "bySeverity": {
+      "high": 25,
+      "medium": 55,
+      "low": 100
+    }
+  }
+}

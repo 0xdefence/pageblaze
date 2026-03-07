@@ -4,7 +4,8 @@
     "runs": 12,
     "pages": 83,
     "documents": 42,
-    "issues": 143
+    "issues": 143,
+    "recommendations": 180
   },
   "statusCounters": {
     "runs": {
