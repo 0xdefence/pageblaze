@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { Worker, Job, UnrecoverableError } from 'bullmq';
+import { Worker, Job, Queue, UnrecoverableError } from 'bullmq';
 import { JSDOM } from 'jsdom';
 import TurndownService from 'turndown';
 import { Readability } from '@mozilla/readability';
@@ -26,6 +26,7 @@ const ALERT_PRIORITY_THRESHOLD = Number(process.env.ALERT_PRIORITY_THRESHOLD || 
 const ALERT_DIFF_THRESHOLD = Number(process.env.ALERT_DIFF_THRESHOLD || 0.3);
 const DOMAIN_DELAY_MS = Number(process.env.DOMAIN_DELAY_MS || 250);
 const lastRequestAtByHost = new Map<string, number>();
+const alertQueue = new Queue(QUEUE_NAME, { connection: { url: redisUrl } });
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -351,16 +352,29 @@ async function fetchSitemapSeeds(startUrl: string, policy: RobotsPolicy, max = 2
   return Array.from(seeds);
 }
 
-async function sendAlertWebhooks(runId: string, category: string, severity: 'critical' | 'high' | 'medium' | 'low', title: string, payload: any) {
+async function enqueueAlertDelivery(runId: string, category: string, severity: 'critical' | 'high' | 'medium' | 'low', title: string, payload: any) {
+  await alertQueue.add(
+    'alert-deliver',
+    { runId, category, severity, title, payload },
+    {
+      removeOnComplete: 300,
+      removeOnFail: 500,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 2000 }
+    }
+  );
+}
+
+async function processAlertDelivery(job: Job) {
+  const { runId, category, severity, title, payload } = job.data as any;
   const eps = await db.query(`SELECT id, url, secret FROM alert_endpoints WHERE enabled = true AND kind = 'webhook'`);
   for (const ep of eps.rows) {
     let status = 'pending';
     let lastError: string | null = null;
     let deliveredAt: string | null = null;
-    let attempts = 0;
+    let attempts = Number(job.attemptsMade || 0) + 1;
 
     try {
-      attempts = 1;
       const headers: Record<string, string> = { 'content-type': 'application/json' };
       if (ep.secret) headers['x-pageblaze-signature'] = ep.secret;
       const body = JSON.stringify(payload);
@@ -381,9 +395,11 @@ async function sendAlertWebhooks(runId: string, category: string, severity: 'cri
     await db.query(
       `INSERT INTO alert_events (run_id, endpoint_id, category, severity, title, payload_json, status, attempts, last_error, delivered_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
-      [runId, ep.id, category, severity, title, JSON.stringify(payload), status, attempts, lastError, deliveredAt]
+      [runId || null, ep.id, category, severity, title, JSON.stringify(payload), status, attempts, lastError, deliveredAt]
     );
   }
+
+  return { ok: true, deliveredTo: eps.rowCount };
 }
 
 async function saveDocument(runId: string, url: string, depth: number, data: any) {
@@ -430,7 +446,7 @@ async function saveDocument(runId: string, url: string, depth: number, data: any
 
     const documentId = Number(doc.rows[0].id);
 
-    const alertQueue: Array<{ category: string; severity: 'critical' | 'high' | 'medium' | 'low'; title: string; payload: any }> = [];
+    const pendingAlerts: Array<{ category: string; severity: 'critical' | 'high' | 'medium' | 'low'; title: string; payload: any }> = [];
 
     for (const issue of data.seoIssues || []) {
       const issueRes = await client.query(
@@ -475,7 +491,7 @@ async function saveDocument(runId: string, url: string, depth: number, data: any
       );
 
       if (rec.priority_score >= ALERT_PRIORITY_THRESHOLD && ['critical', 'high', 'medium', 'low'].includes(issue.severity)) {
-        alertQueue.push({
+        pendingAlerts.push({
           category: 'recommendation',
           severity: issue.severity,
           title: `High-priority recommendation: ${issue.code}`,
@@ -494,7 +510,7 @@ async function saveDocument(runId: string, url: string, depth: number, data: any
     const visual = await saveVisualSnapshot(client, runId, documentId, url, normalizedUrl, urlHash, data.text || '');
 
     if (visual.changed && visual.diffScore >= ALERT_DIFF_THRESHOLD) {
-      alertQueue.push({
+      pendingAlerts.push({
         category: 'visual_diff',
         severity: 'medium',
         title: 'Visual drift detected',
@@ -510,8 +526,8 @@ async function saveDocument(runId: string, url: string, depth: number, data: any
 
     await client.query('COMMIT');
 
-    for (const a of alertQueue) {
-      await sendAlertWebhooks(runId, a.category, a.severity, a.title, a.payload);
+    for (const a of pendingAlerts) {
+      await enqueueAlertDelivery(runId, a.category, a.severity, a.title, a.payload);
     }
 
     return {
@@ -522,7 +538,7 @@ async function saveDocument(runId: string, url: string, depth: number, data: any
       snapshotId: visual.snapshotId,
       diffScore: visual.diffScore,
       changed: visual.changed,
-      alertsSent: alertQueue.length,
+      alertsSent: pendingAlerts.length,
     };
   } catch (err) {
     await client.query('ROLLBACK');
@@ -657,6 +673,10 @@ async function handleCrawl(job: Job) {
 const worker = new Worker(
   QUEUE_NAME,
   async (job) => {
+    if (job.name === 'alert-deliver') {
+      return await processAlertDelivery(job);
+    }
+
     const runId = String(job.id);
     await db.query(`UPDATE crawl_runs SET status='running', updated_at=NOW() WHERE id=$1`, [runId]);
 
@@ -686,6 +706,7 @@ worker.on('failed', (job, err) => {
 async function shutdown(signal: string) {
   console.log(`worker shutting down: ${signal}`);
   await worker.close();
+  await alertQueue.close();
   await db.end();
   process.exit(0);
 }

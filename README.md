@@ -143,6 +143,11 @@ PageBlaze/
   - `POST /v1/alerts/test`
   - `GET /v1/alerts/events`
 
+### Day 7 alert dispatch decoupling
+- Alert delivery moved to dedicated queue jobs (`alert-deliver`)
+- Crawl/scrape processing now only enqueues alerts, keeping core crawl path leaner
+- Alert jobs have independent retry/backoff policy and persisted delivery outcomes
+
 ### Infra
 - Redis
 - Postgres (host port `55432`)
