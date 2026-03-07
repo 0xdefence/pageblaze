@@ -103,7 +103,7 @@ app.get('/v1/jobs/:id', async (req, reply) => {
 });
 
 app.get('/v1/stats', async () => {
-  const [runs, pages, docs, issues, recs, snapshots, diffs, runStatus, pageStatus, issueSeverity] = await Promise.all([
+  const [runs, pages, docs, issues, recs, snapshots, diffs, changedDiffs, runStatus, pageStatus, issueSeverity] = await Promise.all([
     db.query('SELECT COUNT(*)::int AS count FROM crawl_runs'),
     db.query('SELECT COUNT(*)::int AS count FROM crawl_pages'),
     db.query('SELECT COUNT(*)::int AS count FROM documents'),
@@ -111,6 +111,7 @@ app.get('/v1/stats', async () => {
     db.query('SELECT COUNT(*)::int AS count FROM recommendations'),
     db.query('SELECT COUNT(*)::int AS count FROM visual_snapshots'),
     db.query('SELECT COUNT(*)::int AS count FROM visual_diffs'),
+    db.query('SELECT COUNT(*)::int AS count FROM visual_diffs WHERE changed = true'),
     db.query('SELECT status, COUNT(*)::int AS count FROM crawl_runs GROUP BY status'),
     db.query('SELECT status, COUNT(*)::int AS count FROM crawl_pages GROUP BY status'),
     db.query('SELECT severity, COUNT(*)::int AS count FROM seo_issues GROUP BY severity'),
@@ -126,6 +127,7 @@ app.get('/v1/stats', async () => {
       recommendations: recs.rows[0]?.count ?? 0,
       visualSnapshots: snapshots.rows[0]?.count ?? 0,
       visualDiffs: diffs.rows[0]?.count ?? 0,
+      visualChangedDiffs: changedDiffs.rows[0]?.count ?? 0,
     },
     statusCounters: {
       runs: Object.fromEntries(runStatus.rows.map((r: any) => [r.status, r.count])),
@@ -546,6 +548,79 @@ app.get('/v1/trends/recommendations', async (req) => {
   );
 
   return { ok: true, buckets: res.rows };
+});
+
+function toCsv(rows: any[], columns: string[]) {
+  const esc = (v: any) => {
+    if (v == null) return '';
+    const s = String(v).replace(/"/g, '""');
+    return /[",\n]/.test(s) ? `"${s}"` : s;
+  };
+  const header = columns.join(',');
+  const lines = rows.map((r) => columns.map((c) => esc(r[c])).join(','));
+  return [header, ...lines].join('\n') + '\n';
+}
+
+app.get('/v1/export/issues.csv', async (req, reply) => {
+  const q = listQuerySchema.parse(req.query || {});
+  const params: any[] = [];
+  const where: string[] = [];
+  if (q.runId) {
+    params.push(q.runId);
+    where.push(`run_id = $${params.length}`);
+  }
+  if (q.severity) {
+    params.push(q.severity);
+    where.push(`severity = $${params.length}`);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const res = await db.query(
+    `SELECT id, run_id, url, code, severity, message, created_at
+     FROM seo_issues ${whereSql}
+     ORDER BY created_at DESC, id DESC
+     LIMIT 5000`,
+    params
+  );
+  const csv = toCsv(res.rows, ['id', 'run_id', 'url', 'code', 'severity', 'message', 'created_at']);
+  reply.header('content-type', 'text/csv; charset=utf-8');
+  return csv;
+});
+
+app.get('/v1/export/recommendations.csv', async (req, reply) => {
+  const q = listQuerySchema.parse(req.query || {});
+  const params: any[] = [];
+  const where: string[] = [];
+  if (q.runId) {
+    params.push(q.runId);
+    where.push(`run_id = $${params.length}`);
+  }
+  if (q.severity) {
+    params.push(q.severity);
+    where.push(`severity = $${params.length}`);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const res = await db.query(
+    `SELECT id, run_id, url, code, severity, action, priority_score, impact_score, confidence_score, effort_score, created_at
+     FROM recommendations ${whereSql}
+     ORDER BY priority_score DESC, created_at DESC
+     LIMIT 5000`,
+    params
+  );
+  const csv = toCsv(res.rows, [
+    'id',
+    'run_id',
+    'url',
+    'code',
+    'severity',
+    'action',
+    'priority_score',
+    'impact_score',
+    'confidence_score',
+    'effort_score',
+    'created_at',
+  ]);
+  reply.header('content-type', 'text/csv; charset=utf-8');
+  return csv;
 });
 
 async function shutdown(signal: string) {

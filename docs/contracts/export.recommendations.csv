@@ -1,0 +1,2 @@
+id,run_id,url,code,severity,action,priority_score,impact_score,confidence_score,effort_score,created_at
+901,14,https://example.com/,title_missing,high,Add a unique descriptive <title> tag,0.567,0.9,0.9,0.3,2026-03-07T15:00:00.000Z

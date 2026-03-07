@@ -40,6 +40,8 @@ PageBlaze/
 - `GET /v1/trends/recommendations`
 - `GET /v1/visual/snapshots`
 - `GET /v1/visual/diffs`
+- `GET /v1/export/issues.csv`
+- `GET /v1/export/recommendations.csv`
 - `GET /v1/crawls`
 - `GET /v1/crawls/:id`
 - `GET /v1/crawls/:id/pages`
@@ -119,6 +121,13 @@ PageBlaze/
   - `GET /v1/visual/snapshots`
   - `GET /v1/visual/diffs`
 
+### Day 5 enhancements (export + enhanced visual mode)
+- Optional screenshot-assisted visual mode (`VISUAL_SCREENSHOT_ENABLED=true`) with desktop/mobile capture paths and hashes
+- Visual diff scoring now can include screenshot hash drift signal
+- Added CSV export endpoints:
+  - `GET /v1/export/issues.csv`
+  - `GET /v1/export/recommendations.csv`
+
 ### Infra
 - Redis
 - Postgres (host port `55432`)
@@ -185,6 +194,14 @@ npm run smoke:day4
 ```
 
 This validates snapshot/diff persistence and visual endpoints (`/v1/visual/snapshots`, `/v1/visual/diffs`, `/v1/stats`).
+
+Exports smoke (Day 5):
+
+```bash
+npm run smoke:day5
+```
+
+This validates CSV exports and visual endpoint continuity.
 
 ## Manual Test
 

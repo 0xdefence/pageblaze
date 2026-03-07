@@ -1,0 +1,2 @@
+id,run_id,url,code,severity,message,created_at
+501,14,https://example.com/,meta_description_missing,medium,Missing meta description,2026-03-07T15:00:00.000Z

@@ -14,7 +14,8 @@
     "smoke:day1": "bash scripts/smoke-day1.sh",
     "smoke:day2": "bash scripts/smoke-day2-external.sh",
     "smoke:day3": "bash scripts/smoke-day3-analytics.sh",
-    "smoke:day4": "bash scripts/smoke-day4-visual.sh"
+    "smoke:day4": "bash scripts/smoke-day4-visual.sh",
+    "smoke:day5": "bash scripts/smoke-day5-exports.sh"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",

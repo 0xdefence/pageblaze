@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { Worker, Job } from 'bullmq';
 import { JSDOM } from 'jsdom';
 import TurndownService from 'turndown';
@@ -18,6 +20,8 @@ import {
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const BROWSER_ENABLED = String(process.env.BROWSER_ENABLED || 'false').toLowerCase() === 'true';
+const VISUAL_SCREENSHOT_ENABLED = String(process.env.VISUAL_SCREENSHOT_ENABLED || 'false').toLowerCase() === 'true';
+const VISUAL_ARTIFACTS_DIR = process.env.VISUAL_ARTIFACTS_DIR || './artifacts/visual';
 
 async function fetchHttp(url: string): Promise<string> {
   const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(20_000) });
@@ -81,19 +85,65 @@ function textSimilarity(a: string, b: string): number {
   return union ? inter / union : 1;
 }
 
+async function captureScreenshotArtifacts(url: string, urlHash: string) {
+  if (!VISUAL_SCREENSHOT_ENABLED || !BROWSER_ENABLED) {
+    return { imagePaths: null as any, imageHashes: null as any };
+  }
+
+  const now = Date.now();
+  const baseDir = path.resolve(VISUAL_ARTIFACTS_DIR, urlHash.slice(0, 12));
+  await fs.mkdir(baseDir, { recursive: true });
+
+  const desktopPath = path.join(baseDir, `${now}-desktop.png`);
+  const mobilePath = path.join(baseDir, `${now}-mobile.png`);
+
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1366, height: 768 } });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.screenshot({ path: desktopPath, fullPage: true });
+
+    const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await mobile.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await mobile.screenshot({ path: mobilePath, fullPage: true });
+
+    const desktopBuf = await fs.readFile(desktopPath);
+    const mobileBuf = await fs.readFile(mobilePath);
+
+    return {
+      imagePaths: { desktop: desktopPath, mobile: mobilePath },
+      imageHashes: { desktop: hashUrl(desktopBuf.toString('base64')), mobile: hashUrl(mobileBuf.toString('base64')) },
+    };
+  } catch {
+    return { imagePaths: null as any, imageHashes: null as any };
+  } finally {
+    await browser.close();
+  }
+}
+
 async function saveVisualSnapshot(runId: string, documentId: number, url: string, normalizedUrl: string, urlHash: string, textContent: string) {
   const contentHash = hashUrl(textContent || '');
+  const shot = await captureScreenshotArtifacts(url, urlHash);
 
   const snapRes = await db.query(
-    `INSERT INTO visual_snapshots (run_id, document_id, url, normalized_url, url_hash, snapshot_kind, content_hash, metadata_json)
-     VALUES ($1, $2, $3, $4, $5, 'content', $6, $7)
+    `INSERT INTO visual_snapshots (run_id, document_id, url, normalized_url, url_hash, snapshot_kind, content_hash, image_path, metadata_json)
+     VALUES ($1, $2, $3, $4, $5, 'content', $6, $7, $8)
      RETURNING id`,
-    [runId, documentId, url, normalizedUrl, urlHash, contentHash, JSON.stringify({ source: 'text_hash' })]
+    [
+      runId,
+      documentId,
+      url,
+      normalizedUrl,
+      urlHash,
+      contentHash,
+      shot.imagePaths?.desktop || null,
+      JSON.stringify({ source: 'text_hash', imagePaths: shot.imagePaths, imageHashes: shot.imageHashes }),
+    ]
   );
   const snapshotId = Number(snapRes.rows[0].id);
 
   const prevRes = await db.query(
-    `SELECT id, content_hash, document_id FROM visual_snapshots
+    `SELECT id, content_hash, document_id, metadata_json FROM visual_snapshots
      WHERE url_hash=$1 AND id <> $2
      ORDER BY created_at DESC
      LIMIT 1`,
@@ -108,21 +158,44 @@ async function saveVisualSnapshot(runId: string, documentId: number, url: string
   if (prevRes.rowCount) {
     prevId = Number(prevRes.rows[0].id);
     const prevDocId = Number(prevRes.rows[0].document_id || 0);
+    const prevMeta = prevRes.rows[0].metadata_json || {};
     let prevText = '';
     if (prevDocId) {
       const prevDocRes = await db.query('SELECT text_content FROM documents WHERE id=$1', [prevDocId]);
       prevText = String(prevDocRes.rows[0]?.text_content || '');
     }
+
     const sim = textSimilarity(textContent || '', prevText);
     diffScore = Number((1 - sim).toFixed(4));
+
+    const prevDesktopHash = prevMeta?.imageHashes?.desktop;
+    const curDesktopHash = shot.imageHashes?.desktop;
+    if (prevDesktopHash && curDesktopHash && prevDesktopHash !== curDesktopHash) {
+      diffScore = Math.max(diffScore, 0.35);
+      summary = 'visual drift detected (desktop hash changed)';
+    }
+
     changed = diffScore >= 0.2;
-    summary = changed ? 'content drift detected' : 'minor/no drift';
+    if (!summary || summary === 'first snapshot') {
+      summary = changed ? 'content drift detected' : 'minor/no drift';
+    }
   }
 
   await db.query(
     `INSERT INTO visual_diffs (run_id, snapshot_id, previous_snapshot_id, url, normalized_url, url_hash, diff_score, changed, summary, metadata_json)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-    [runId, snapshotId, prevId, url, normalizedUrl, urlHash, diffScore, changed, summary, JSON.stringify({ method: 'token_jaccard' })]
+    [
+      runId,
+      snapshotId,
+      prevId,
+      url,
+      normalizedUrl,
+      urlHash,
+      diffScore,
+      changed,
+      summary,
+      JSON.stringify({ method: 'token_jaccard', screenshot_enabled: VISUAL_SCREENSHOT_ENABLED }),
+    ]
   );
 
   return { snapshotId, diffScore, changed };
