@@ -24,13 +24,15 @@ PageBlaze/
   PRD.md
 ```
 
-## Features Implemented (Day 1)
+## Features Implemented (Day 1 + Day 2 Block 1)
 
 ### API
 - `GET /healthz`
 - `POST /v1/scrape`
 - `POST /v1/crawl`
 - `GET /v1/jobs/:id`
+- `GET /v1/crawls/:id`
+- `GET /v1/documents/:id`
 - API key auth via `x-api-key`
 - Structured validation errors (400)
 - Queue retries/backoff/timeouts
@@ -44,6 +46,15 @@ PageBlaze/
 - `crawl` jobs:
   - basic BFS crawl with depth/page limits
 - graceful shutdown handlers
+
+### Persistence (Day 2 Block 1)
+- Postgres schema auto-init on API/worker start
+- Tables:
+  - `crawl_runs`
+  - `crawl_pages`
+  - `documents`
+- Job lifecycle persisted (`queued` → `running` → `done/failed`)
+- Scrape/crawl outputs stored as queryable documents/pages
 
 ### Infra
 - Redis

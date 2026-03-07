@@ -1,6 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["src/**/*.ts", "../../packages/shared/src/**/*.ts"],
+  "include": ["src/**/*.ts", "../../packages/shared/src/**/*.ts", "../../packages/shared/src/**/*.d.ts"],
   "compilerOptions": {
     "paths": {
       "@pageblaze/shared": ["../../packages/shared/src"]

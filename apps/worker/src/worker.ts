@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import TurndownService from 'turndown';
 import { Readability } from '@mozilla/readability';
 import { chromium } from 'playwright';
-import { QUEUE_NAME } from '@pageblaze/shared';
+import { QUEUE_NAME, db, initDbSchema } from '@pageblaze/shared';
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const BROWSER_ENABLED = String(process.env.BROWSER_ENABLED || 'false').toLowerCase() === 'true';
@@ -50,8 +50,7 @@ function extractContent(html: string, url: string) {
   };
 }
 
-async function handleScrape(job: Job) {
-  const { url, renderMode = 'auto' } = job.data as any;
+async function scrapeUrl(url: string, renderMode = 'auto') {
   let html = '';
   let mode = renderMode;
 
@@ -75,7 +74,44 @@ async function handleScrape(job: Job) {
   return { ok: true, mode, url, ...extracted };
 }
 
+async function saveDocument(runId: string, url: string, depth: number, data: any) {
+  const page = await db.query(
+    `INSERT INTO crawl_pages (run_id, url, depth, title, excerpt, status)
+     VALUES ($1, $2, $3, $4, $5, 'done')
+     ON CONFLICT (run_id, url)
+     DO UPDATE SET title=EXCLUDED.title, excerpt=EXCLUDED.excerpt, status='done', error=NULL
+     RETURNING id`,
+    [runId, url, depth, data.title || null, data.excerpt || null]
+  );
+
+  const doc = await db.query(
+    `INSERT INTO documents (run_id, url, title, excerpt, markdown, text_content, metadata_json)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id`,
+    [runId, url, data.title || null, data.excerpt || null, data.markdown || '', data.text || '', JSON.stringify({ mode: data.mode, links: data.links?.length || 0, pageId: page.rows[0].id })]
+  );
+
+  return Number(doc.rows[0].id);
+}
+
+async function handleScrape(job: Job) {
+  const runId = String(job.id);
+  const { url, renderMode = 'auto' } = job.data as any;
+  const result = await scrapeUrl(url, renderMode);
+  const documentId = await saveDocument(runId, url, 0, result);
+
+  await db.query(
+    `UPDATE crawl_runs
+     SET status='done', pages_count=1, result_json=$2::jsonb, updated_at=NOW()
+     WHERE id=$1`,
+    [runId, JSON.stringify({ ok: true, type: 'scrape', url, documentId })]
+  );
+
+  return { runId, documentId, ...result };
+}
+
 async function handleCrawl(job: Job) {
+  const runId = String(job.id);
   const {
     startUrl,
     maxDepth = 1,
@@ -100,32 +136,61 @@ async function handleCrawl(job: Job) {
     if (!allowed.has(u.hostname.toLowerCase())) continue;
     if (excludePatterns.some((p: string) => cur.url.includes(p))) continue;
 
-    const r = await handleScrape({ data: { url: cur.url, renderMode } } as any);
-    items.push({ url: cur.url, depth: cur.depth, title: r.title, excerpt: r.excerpt });
+    try {
+      const r = await scrapeUrl(cur.url, renderMode);
+      const documentId = await saveDocument(runId, cur.url, cur.depth, r);
+      items.push({ url: cur.url, depth: cur.depth, title: r.title, excerpt: r.excerpt, documentId });
 
-    if (cur.depth < maxDepth) {
-      for (const l of r.links || []) {
-        try {
-          const lu = new URL(l, cur.url);
-          if (allowed.has(lu.hostname.toLowerCase()) && !seen.has(lu.href)) q.push({ url: lu.href, depth: cur.depth + 1 });
-        } catch {
-          // ignore malformed links
+      if (cur.depth < maxDepth) {
+        for (const l of r.links || []) {
+          try {
+            const lu = new URL(l, cur.url);
+            if (allowed.has(lu.hostname.toLowerCase()) && !seen.has(lu.href)) q.push({ url: lu.href, depth: cur.depth + 1 });
+          } catch {
+            // ignore malformed links
+          }
         }
       }
+    } catch (e: any) {
+      await db.query(
+        `INSERT INTO crawl_pages (run_id, url, depth, status, error)
+         VALUES ($1, $2, $3, 'failed', $4)
+         ON CONFLICT (run_id, url)
+         DO UPDATE SET status='failed', error=EXCLUDED.error`,
+        [runId, cur.url, cur.depth, String(e?.message || e)]
+      );
     }
 
     await job.updateProgress(Math.min(100, Math.round((items.length / maxPages) * 100)));
   }
 
-  return { ok: true, startUrl, pages: items.length, items };
+  await db.query(
+    `UPDATE crawl_runs
+     SET status='done', pages_count=$2, result_json=$3::jsonb, updated_at=NOW()
+     WHERE id=$1`,
+    [runId, items.length, JSON.stringify({ ok: true, type: 'crawl', startUrl, pages: items.length })]
+  );
+
+  return { ok: true, runId, startUrl, pages: items.length, items };
 }
 
 const worker = new Worker(
   QUEUE_NAME,
   async (job) => {
-    if (job.name === 'scrape') return handleScrape(job);
-    if (job.name === 'crawl') return handleCrawl(job);
-    throw new Error(`unknown_job:${job.name}`);
+    const runId = String(job.id);
+    await db.query(`UPDATE crawl_runs SET status='running', updated_at=NOW() WHERE id=$1`, [runId]);
+
+    try {
+      if (job.name === 'scrape') return await handleScrape(job);
+      if (job.name === 'crawl') return await handleCrawl(job);
+      throw new Error(`unknown_job:${job.name}`);
+    } catch (err: any) {
+      await db.query(
+        `UPDATE crawl_runs SET status='failed', error=$2, updated_at=NOW() WHERE id=$1`,
+        [runId, String(err?.message || err)]
+      );
+      throw err;
+    }
   },
   { connection: { url: redisUrl }, concurrency: 3 }
 );
@@ -137,10 +202,14 @@ worker.on('failed', (job, err) => {
 async function shutdown(signal: string) {
   console.log(`worker shutting down: ${signal}`);
   await worker.close();
+  await db.end();
   process.exit(0);
 }
 
 process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
-console.log('PageBlaze worker started');
+(async () => {
+  await initDbSchema();
+  console.log('PageBlaze worker started');
+})();

@@ -13,6 +13,7 @@
     "@types/node": "^20.14.10",
     "@types/turndown": "^5.0.5",
     "bullmq": "^5.8.4",
+    "pg": "^8.13.1",
     "dotenv": "^16.4.5",
     "ioredis": "^5.4.1",
     "jsdom": "^24.1.1",
