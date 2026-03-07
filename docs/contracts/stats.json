@@ -5,7 +5,9 @@
     "pages": 83,
     "documents": 42,
     "issues": 143,
-    "recommendations": 180
+    "recommendations": 180,
+    "visualSnapshots": 84,
+    "visualDiffs": 84
   },
   "statusCounters": {
     "runs": {

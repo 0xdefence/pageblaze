@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "diffs": [
+    {
+      "id": 1301,
+      "run_id": "21",
+      "snapshot_id": 1201,
+      "previous_snapshot_id": 1199,
+      "url": "https://example.com/",
+      "normalized_url": "https://example.com/",
+      "url_hash": "abc123...",
+      "diff_score": 0.27,
+      "changed": true,
+      "summary": "content drift detected",
+      "metadata_json": { "method": "token_jaccard" },
+      "created_at": "2026-03-07T15:00:00.000Z"
+    }
+  ],
+  "page": { "limit": 50, "offset": 0 }
+}

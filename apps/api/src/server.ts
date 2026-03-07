@@ -103,12 +103,14 @@ app.get('/v1/jobs/:id', async (req, reply) => {
 });
 
 app.get('/v1/stats', async () => {
-  const [runs, pages, docs, issues, recs, runStatus, pageStatus, issueSeverity] = await Promise.all([
+  const [runs, pages, docs, issues, recs, snapshots, diffs, runStatus, pageStatus, issueSeverity] = await Promise.all([
     db.query('SELECT COUNT(*)::int AS count FROM crawl_runs'),
     db.query('SELECT COUNT(*)::int AS count FROM crawl_pages'),
     db.query('SELECT COUNT(*)::int AS count FROM documents'),
     db.query('SELECT COUNT(*)::int AS count FROM seo_issues'),
     db.query('SELECT COUNT(*)::int AS count FROM recommendations'),
+    db.query('SELECT COUNT(*)::int AS count FROM visual_snapshots'),
+    db.query('SELECT COUNT(*)::int AS count FROM visual_diffs'),
     db.query('SELECT status, COUNT(*)::int AS count FROM crawl_runs GROUP BY status'),
     db.query('SELECT status, COUNT(*)::int AS count FROM crawl_pages GROUP BY status'),
     db.query('SELECT severity, COUNT(*)::int AS count FROM seo_issues GROUP BY severity'),
@@ -122,6 +124,8 @@ app.get('/v1/stats', async () => {
       documents: docs.rows[0]?.count ?? 0,
       issues: issues.rows[0]?.count ?? 0,
       recommendations: recs.rows[0]?.count ?? 0,
+      visualSnapshots: snapshots.rows[0]?.count ?? 0,
+      visualDiffs: diffs.rows[0]?.count ?? 0,
     },
     statusCounters: {
       runs: Object.fromEntries(runStatus.rows.map((r: any) => [r.status, r.count])),
@@ -403,6 +407,56 @@ app.get('/v1/recommendations/top', async (req) => {
   );
 
   return { ok: true, topFixes: res.rows, limit };
+});
+
+app.get('/v1/visual/snapshots', async (req) => {
+  const q = listQuerySchema.parse(req.query || {});
+  const limit = q.limit ?? 50;
+  const offset = q.offset ?? 0;
+
+  const params: any[] = [];
+  let where = '';
+  if (q.runId) {
+    params.push(q.runId);
+    where = `WHERE run_id = $${params.length}`;
+  }
+
+  params.push(limit, offset);
+  const res = await db.query(
+    `SELECT id, run_id, document_id, url, normalized_url, url_hash, snapshot_kind, content_hash, image_path, metadata_json, created_at
+     FROM visual_snapshots
+     ${where}
+     ORDER BY created_at DESC, id DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+
+  return { ok: true, snapshots: res.rows, page: { limit, offset } };
+});
+
+app.get('/v1/visual/diffs', async (req) => {
+  const q = listQuerySchema.parse(req.query || {});
+  const limit = q.limit ?? 50;
+  const offset = q.offset ?? 0;
+
+  const params: any[] = [];
+  let where = '';
+  if (q.runId) {
+    params.push(q.runId);
+    where = `WHERE run_id = $${params.length}`;
+  }
+
+  params.push(limit, offset);
+  const res = await db.query(
+    `SELECT id, run_id, snapshot_id, previous_snapshot_id, url, normalized_url, url_hash, diff_score, changed, summary, metadata_json, created_at
+     FROM visual_diffs
+     ${where}
+     ORDER BY diff_score DESC, created_at DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+
+  return { ok: true, diffs: res.rows, page: { limit, offset } };
 });
 
 app.get('/v1/issues/groups', async (req) => {

@@ -38,6 +38,8 @@ PageBlaze/
 - `GET /v1/recommendations/top`
 - `GET /v1/trends/issues`
 - `GET /v1/trends/recommendations`
+- `GET /v1/visual/snapshots`
+- `GET /v1/visual/diffs`
 - `GET /v1/crawls`
 - `GET /v1/crawls/:id`
 - `GET /v1/crawls/:id/pages`
@@ -109,6 +111,14 @@ PageBlaze/
   - `GET /v1/trends/issues`
   - `GET /v1/trends/recommendations`
 
+### Visual diff scaffold (Day 4)
+- Added persisted `visual_snapshots` + `visual_diffs`
+- Content-hash snapshotting for each document
+- Token-similarity diff scoring (`diff_score`) with changed flag
+- Added visual query endpoints:
+  - `GET /v1/visual/snapshots`
+  - `GET /v1/visual/diffs`
+
 ### Infra
 - Redis
 - Postgres (host port `55432`)
@@ -167,6 +177,14 @@ npm run smoke:day3
 ```
 
 This validates deterministic issue extraction, recommendation generation, and analytics endpoints (`/v1/issues`, `/v1/recommendations`, `/v1/recommendations/top`, `/v1/issues/groups`, trend endpoints, `/v1/stats`).
+
+Visual smoke (Day 4):
+
+```bash
+npm run smoke:day4
+```
+
+This validates snapshot/diff persistence and visual endpoints (`/v1/visual/snapshots`, `/v1/visual/diffs`, `/v1/stats`).
 
 ## Manual Test
 

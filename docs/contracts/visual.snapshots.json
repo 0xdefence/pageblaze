@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "snapshots": [
+    {
+      "id": 1201,
+      "run_id": "21",
+      "document_id": 330,
+      "url": "https://example.com/",
+      "normalized_url": "https://example.com/",
+      "url_hash": "abc123...",
+      "snapshot_kind": "content",
+      "content_hash": "def456...",
+      "image_path": null,
+      "metadata_json": { "source": "text_hash" },
+      "created_at": "2026-03-07T15:00:00.000Z"
+    }
+  ],
+  "page": { "limit": 50, "offset": 0 }
+}

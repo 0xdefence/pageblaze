@@ -72,6 +72,62 @@ function recommendationForIssue(code: string, severity: 'critical' | 'high' | 'm
   };
 }
 
+function textSimilarity(a: string, b: string): number {
+  const ta = new Set((a || '').toLowerCase().split(/\W+/).filter(Boolean));
+  const tb = new Set((b || '').toLowerCase().split(/\W+/).filter(Boolean));
+  if (!ta.size && !tb.size) return 1;
+  const inter = [...ta].filter((x) => tb.has(x)).length;
+  const union = new Set([...ta, ...tb]).size;
+  return union ? inter / union : 1;
+}
+
+async function saveVisualSnapshot(runId: string, documentId: number, url: string, normalizedUrl: string, urlHash: string, textContent: string) {
+  const contentHash = hashUrl(textContent || '');
+
+  const snapRes = await db.query(
+    `INSERT INTO visual_snapshots (run_id, document_id, url, normalized_url, url_hash, snapshot_kind, content_hash, metadata_json)
+     VALUES ($1, $2, $3, $4, $5, 'content', $6, $7)
+     RETURNING id`,
+    [runId, documentId, url, normalizedUrl, urlHash, contentHash, JSON.stringify({ source: 'text_hash' })]
+  );
+  const snapshotId = Number(snapRes.rows[0].id);
+
+  const prevRes = await db.query(
+    `SELECT id, content_hash, document_id FROM visual_snapshots
+     WHERE url_hash=$1 AND id <> $2
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [urlHash, snapshotId]
+  );
+
+  let diffScore = 0;
+  let changed = false;
+  let summary = 'first snapshot';
+  let prevId: number | null = null;
+
+  if (prevRes.rowCount) {
+    prevId = Number(prevRes.rows[0].id);
+    const prevDocId = Number(prevRes.rows[0].document_id || 0);
+    let prevText = '';
+    if (prevDocId) {
+      const prevDocRes = await db.query('SELECT text_content FROM documents WHERE id=$1', [prevDocId]);
+      prevText = String(prevDocRes.rows[0]?.text_content || '');
+    }
+    const sim = textSimilarity(textContent || '', prevText);
+    diffScore = Number((1 - sim).toFixed(4));
+    changed = diffScore >= 0.2;
+    summary = changed ? 'content drift detected' : 'minor/no drift';
+  }
+
+  await db.query(
+    `INSERT INTO visual_diffs (run_id, snapshot_id, previous_snapshot_id, url, normalized_url, url_hash, diff_score, changed, summary, metadata_json)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [runId, snapshotId, prevId, url, normalizedUrl, urlHash, diffScore, changed, summary, JSON.stringify({ method: 'token_jaccard' })]
+  );
+
+  return { snapshotId, diffScore, changed };
+}
+
 function detectSeoIssues(doc: Document, pageUrl: string) {
   const issues: Array<{ code: string; severity: 'critical' | 'high' | 'medium' | 'low'; message: string; evidence: any }> = [];
 
@@ -276,7 +332,17 @@ async function saveDocument(runId: string, url: string, depth: number, data: any
     );
   }
 
-  return { documentId, normalizedUrl, urlHash, seoIssueCount: (data.seoIssues || []).length };
+  const visual = await saveVisualSnapshot(runId, documentId, url, normalizedUrl, urlHash, data.text || '');
+
+  return {
+    documentId,
+    normalizedUrl,
+    urlHash,
+    seoIssueCount: (data.seoIssues || []).length,
+    snapshotId: visual.snapshotId,
+    diffScore: visual.diffScore,
+    changed: visual.changed,
+  };
 }
 
 async function handleScrape(job: Job) {

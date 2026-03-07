@@ -77,6 +77,35 @@ export async function initDbSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS visual_snapshots (
+      id BIGSERIAL PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES crawl_runs(id) ON DELETE CASCADE,
+      document_id BIGINT REFERENCES documents(id) ON DELETE CASCADE,
+      url TEXT NOT NULL,
+      normalized_url TEXT NOT NULL,
+      url_hash TEXT NOT NULL,
+      snapshot_kind TEXT NOT NULL DEFAULT 'content',
+      content_hash TEXT,
+      image_path TEXT,
+      metadata_json JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS visual_diffs (
+      id BIGSERIAL PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES crawl_runs(id) ON DELETE CASCADE,
+      snapshot_id BIGINT REFERENCES visual_snapshots(id) ON DELETE CASCADE,
+      previous_snapshot_id BIGINT REFERENCES visual_snapshots(id) ON DELETE SET NULL,
+      url TEXT NOT NULL,
+      normalized_url TEXT NOT NULL,
+      url_hash TEXT NOT NULL,
+      diff_score REAL NOT NULL,
+      changed BOOLEAN NOT NULL,
+      summary TEXT,
+      metadata_json JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     ALTER TABLE crawl_pages ADD COLUMN IF NOT EXISTS normalized_url TEXT;
     ALTER TABLE crawl_pages ADD COLUMN IF NOT EXISTS url_hash TEXT;
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS normalized_url TEXT;
@@ -102,5 +131,9 @@ export async function initDbSchema() {
     CREATE UNIQUE INDEX IF NOT EXISTS uq_recommendations_run_issue ON recommendations(run_id, issue_id);
     CREATE INDEX IF NOT EXISTS idx_recommendations_run_priority ON recommendations(run_id, priority_score DESC);
     CREATE INDEX IF NOT EXISTS idx_recommendations_code_priority ON recommendations(code, priority_score DESC);
+    CREATE INDEX IF NOT EXISTS idx_visual_snapshots_urlhash_created ON visual_snapshots(url_hash, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_visual_snapshots_run_id ON visual_snapshots(run_id);
+    CREATE INDEX IF NOT EXISTS idx_visual_diffs_run_score ON visual_diffs(run_id, diff_score DESC);
+    CREATE INDEX IF NOT EXISTS idx_visual_diffs_urlhash_created ON visual_diffs(url_hash, created_at DESC);
   `);
 }
