@@ -100,6 +100,29 @@ app.get('/v1/jobs/:id', async (req, reply) => {
   };
 });
 
+app.get('/v1/stats', async () => {
+  const [runs, pages, docs, runStatus, pageStatus] = await Promise.all([
+    db.query('SELECT COUNT(*)::int AS count FROM crawl_runs'),
+    db.query('SELECT COUNT(*)::int AS count FROM crawl_pages'),
+    db.query('SELECT COUNT(*)::int AS count FROM documents'),
+    db.query('SELECT status, COUNT(*)::int AS count FROM crawl_runs GROUP BY status'),
+    db.query('SELECT status, COUNT(*)::int AS count FROM crawl_pages GROUP BY status'),
+  ]);
+
+  return {
+    ok: true,
+    counts: {
+      runs: runs.rows[0]?.count ?? 0,
+      pages: pages.rows[0]?.count ?? 0,
+      documents: docs.rows[0]?.count ?? 0,
+    },
+    statusCounters: {
+      runs: Object.fromEntries(runStatus.rows.map((r: any) => [r.status, r.count])),
+      pages: Object.fromEntries(pageStatus.rows.map((r: any) => [r.status, r.count])),
+    },
+  };
+});
+
 app.get('/v1/crawls', async (req) => {
   const q = listQuerySchema.parse(req.query || {});
   const limit = q.limit ?? 20;
@@ -128,7 +151,23 @@ app.get('/v1/crawls', async (req) => {
     params
   );
 
-  return { ok: true, crawls: res.rows, limit, offset };
+  const countParams = params.slice(0, params.length - 2);
+  const totalRes = await db.query(
+    `SELECT COUNT(*)::int AS count FROM crawl_runs ${whereSql}`,
+    countParams
+  );
+
+  const statusRes = await db.query(
+    `SELECT status, COUNT(*)::int AS count FROM crawl_runs ${whereSql} GROUP BY status`,
+    countParams
+  );
+
+  return {
+    ok: true,
+    crawls: res.rows,
+    page: { limit, offset, total: totalRes.rows[0]?.count ?? 0 },
+    counters: { byStatus: Object.fromEntries(statusRes.rows.map((r: any) => [r.status, r.count])) },
+  };
 });
 
 app.get('/v1/crawls/:id', async (req, reply) => {
@@ -174,7 +213,23 @@ app.get('/v1/crawls/:id/pages', async (req, reply) => {
     params
   );
 
-  return { ok: true, pages: res.rows, limit, offset };
+  const countParams = params.slice(0, params.length - 2);
+  const totalRes = await db.query(
+    `SELECT COUNT(*)::int AS count FROM crawl_pages WHERE run_id=$1${filter}`,
+    countParams
+  );
+
+  const statusRes = await db.query(
+    'SELECT status, COUNT(*)::int AS count FROM crawl_pages WHERE run_id=$1 GROUP BY status',
+    [id]
+  );
+
+  return {
+    ok: true,
+    pages: res.rows,
+    page: { limit, offset, total: totalRes.rows[0]?.count ?? 0 },
+    counters: { byStatus: Object.fromEntries(statusRes.rows.map((r: any) => [r.status, r.count])) },
+  };
 });
 
 app.get('/v1/documents', async (req) => {
@@ -199,7 +254,14 @@ app.get('/v1/documents', async (req) => {
     params
   );
 
-  return { ok: true, documents: res.rows, limit, offset };
+  const countParams = params.slice(0, params.length - 2);
+  const totalRes = await db.query(`SELECT COUNT(*)::int AS count FROM documents ${where}`, countParams);
+
+  return {
+    ok: true,
+    documents: res.rows,
+    page: { limit, offset, total: totalRes.rows[0]?.count ?? 0 },
+  };
 });
 
 app.get('/v1/documents/:id', async (req, reply) => {

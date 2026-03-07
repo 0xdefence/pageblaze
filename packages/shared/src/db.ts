@@ -56,8 +56,12 @@ export async function initDbSchema() {
     CREATE UNIQUE INDEX IF NOT EXISTS uq_documents_run_hash ON documents(run_id, url_hash);
 
     CREATE INDEX IF NOT EXISTS idx_crawl_runs_created_at ON crawl_runs(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_crawl_runs_status_created_at ON crawl_runs(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_crawl_runs_type_created_at ON crawl_runs(type, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_crawl_pages_run_id ON crawl_pages(run_id);
+    CREATE INDEX IF NOT EXISTS idx_crawl_pages_run_status_id ON crawl_pages(run_id, status, id);
     CREATE INDEX IF NOT EXISTS idx_documents_run_id ON documents(run_id);
+    CREATE INDEX IF NOT EXISTS idx_documents_run_created_id ON documents(run_id, created_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_documents_url_hash ON documents(url_hash);
   `);
 }

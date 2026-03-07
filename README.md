@@ -31,6 +31,7 @@ PageBlaze/
 - `POST /v1/scrape`
 - `POST /v1/crawl`
 - `GET /v1/jobs/:id`
+- `GET /v1/stats`
 - `GET /v1/crawls`
 - `GET /v1/crawls/:id`
 - `GET /v1/crawls/:id/pages`
@@ -77,6 +78,12 @@ PageBlaze/
 - Crawl run listing with filters + pagination
 - Crawl pages listing endpoint with status filter + pagination
 - Documents listing endpoint with `runId` filter + pagination
+
+### Query optimization + counters + contracts (Day 2 Block 6)
+- Added DB indexes for run status/type sorting and page/document lookup paths
+- Added status counters and total pagination metadata in list endpoints
+- Added `GET /v1/stats` aggregate counters endpoint
+- Added response contracts under `docs/contracts/`
 
 ### Infra
 - Redis
