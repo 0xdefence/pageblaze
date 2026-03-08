@@ -47,6 +47,7 @@ PageBlaze/
 - `POST /v1/alerts/endpoints`
 - `GET /v1/alerts/endpoints`
 - `POST /v1/alerts/test`
+- `POST /v1/alerts/retry/:eventId`
 - `GET /v1/alerts/events`
 - `GET /v1/crawls`
 - `GET /v1/crawls/:id`
@@ -148,6 +149,11 @@ PageBlaze/
 - Alert delivery moved to dedicated queue jobs (`alert-deliver`)
 - Crawl/scrape processing now only enqueues alerts, keeping core crawl path leaner
 - Alert jobs have independent retry/backoff policy and persisted delivery outcomes
+
+### Day 10 alert hardening
+- Split dedicated alert queue namespace (`pageblaze-alerts`)
+- Added dedupe hash on alert events for idempotent delivery writes
+- Added failed alert replay endpoint: `POST /v1/alerts/retry/:eventId`
 
 ### Infra
 - Redis

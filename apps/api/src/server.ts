@@ -2,11 +2,12 @@ import 'dotenv/config';
 import Fastify from 'fastify';
 import { Queue } from 'bullmq';
 import { ZodError, z } from 'zod';
-import { QUEUE_NAME, db, normalizeUrl, verifySchema } from '@pageblaze/shared';
+import { ALERT_QUEUE_NAME, QUEUE_NAME, db, normalizeUrl, verifySchema } from '@pageblaze/shared';
 
 const app = Fastify({ logger: true });
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const queue = new Queue(QUEUE_NAME, { connection: { url: redisUrl } });
+const alertQueue = new Queue(ALERT_QUEUE_NAME, { connection: { url: redisUrl } });
 const PORT = Number(process.env.PORT || 4410);
 const API_KEY = process.env.API_KEY || 'pageblaze-dev-key';
 const STARTED_AT = Date.now();
@@ -228,6 +229,28 @@ app.get('/v1/alerts/events', async (req) => {
   const countParams = params.slice(0, -2);
   const total = await q(`SELECT COUNT(*)::int AS count FROM alert_events ${whereSql}`, countParams, 'alerts_count_events');
   return { ok: true, events: res.rows, page: { limit, offset, total: total.rows[0]?.count ?? 0 } };
+});
+
+app.post('/v1/alerts/retry/:eventId', async (req, reply) => {
+  const { eventId } = req.params as { eventId: string };
+  const ev = await q(
+    `SELECT id, run_id, category, severity, title, payload_json
+     FROM alert_events WHERE id=$1`,
+    [eventId],
+    'alerts_retry_lookup'
+  );
+  if (!ev.rowCount) return reply.status(404).send({ ok: false, error: 'alert_event_not_found' });
+
+  const row = ev.rows[0];
+  const job = await alertQueue.add('alert-deliver', {
+    runId: row.run_id,
+    category: row.category,
+    severity: row.severity,
+    title: row.title,
+    payload: row.payload_json,
+  }, { removeOnComplete: 300, removeOnFail: 500, attempts: 3, backoff: { type: 'exponential', delay: 2000 } });
+
+  return { ok: true, retriedEventId: Number(eventId), alertJobId: job.id };
 });
 
 app.post('/v1/alerts/test', async (req, reply) => {
@@ -762,6 +785,7 @@ async function shutdown(signal: string) {
   app.log.info({ signal }, 'shutting down');
   await app.close();
   await queue.close();
+  await alertQueue.close();
   await db.end();
   process.exit(0);
 }

@@ -7,6 +7,7 @@ import TurndownService from 'turndown';
 import { Readability } from '@mozilla/readability';
 import { chromium } from 'playwright';
 import {
+  ALERT_QUEUE_NAME,
   QUEUE_NAME,
   db,
   extractSitemapUrls,
@@ -26,7 +27,7 @@ const ALERT_PRIORITY_THRESHOLD = Number(process.env.ALERT_PRIORITY_THRESHOLD || 
 const ALERT_DIFF_THRESHOLD = Number(process.env.ALERT_DIFF_THRESHOLD || 0.3);
 const DOMAIN_DELAY_MS = Number(process.env.DOMAIN_DELAY_MS || 250);
 const lastRequestAtByHost = new Map<string, number>();
-const alertQueue = new Queue(QUEUE_NAME, { connection: { url: redisUrl } });
+const alertQueue = new Queue(ALERT_QUEUE_NAME, { connection: { url: redisUrl } });
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -392,10 +393,13 @@ async function processAlertDelivery(job: Job) {
       lastError = String(e?.message || e);
     }
 
+    const dedupeHash = hashUrl(JSON.stringify({ runId, endpointId: ep.id, category, severity, title, payload }));
     await db.query(
-      `INSERT INTO alert_events (run_id, endpoint_id, category, severity, title, payload_json, status, attempts, last_error, delivered_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
-      [runId || null, ep.id, category, severity, title, JSON.stringify(payload), status, attempts, lastError, deliveredAt]
+      `INSERT INTO alert_events (run_id, endpoint_id, category, severity, title, payload_json, status, attempts, last_error, delivered_at, dedupe_hash, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+       ON CONFLICT (dedupe_hash)
+       DO UPDATE SET status=EXCLUDED.status, attempts=EXCLUDED.attempts, last_error=EXCLUDED.last_error, delivered_at=EXCLUDED.delivered_at, updated_at=NOW()`,
+      [runId || null, ep.id, category, severity, title, JSON.stringify(payload), status, attempts, lastError, deliveredAt, dedupeHash]
     );
   }
 
@@ -673,10 +677,6 @@ async function handleCrawl(job: Job) {
 const worker = new Worker(
   QUEUE_NAME,
   async (job) => {
-    if (job.name === 'alert-deliver') {
-      return await processAlertDelivery(job);
-    }
-
     const runId = String(job.id);
     await db.query(`UPDATE crawl_runs SET status='running', updated_at=NOW() WHERE id=$1`, [runId]);
 
@@ -703,9 +703,23 @@ worker.on('failed', (job, err) => {
   console.error('job_failed', { id: job?.id, name: job?.name, err: err.message });
 });
 
+const alertWorker = new Worker(
+  ALERT_QUEUE_NAME,
+  async (job) => {
+    if (job.name !== 'alert-deliver') throw new UnrecoverableError(`unknown_alert_job:${job.name}`);
+    return await processAlertDelivery(job);
+  },
+  { connection: { url: redisUrl }, concurrency: 4 }
+);
+
+alertWorker.on('failed', (job, err) => {
+  console.error('alert_job_failed', { id: job?.id, name: job?.name, err: err.message });
+});
+
 async function shutdown(signal: string) {
   console.log(`worker shutting down: ${signal}`);
   await worker.close();
+  await alertWorker.close();
   await alertQueue.close();
   await db.end();
   process.exit(0);
