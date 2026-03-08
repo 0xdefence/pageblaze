@@ -170,6 +170,11 @@ PageBlaze/
 - Added deploy runbook: `docs/DEPLOY_RUNBOOK.md`
 - Added incident workflow for alert replay and queue backlog triage
 
+### Day 13 CI + contract checks
+- Added CI workflow: `.github/workflows/pageblaze-ci.yml`
+- CI now runs workspace build + contracts validation
+- Added contract validation script: `scripts/validate-contracts.mjs`
+
 ### Infra
 - Redis
 - Postgres (host port `55432`)
