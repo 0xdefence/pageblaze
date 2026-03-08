@@ -46,6 +46,7 @@ async function api<T>(path: string): Promise<T> {
 export function App() {
   const [tab, setTab] = useState<'overview' | 'issues' | 'recommendations'>('overview');
   const [severity, setSeverity] = useState<'all' | 'critical' | 'high' | 'medium' | 'low'>('all');
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
 
   const [stats, setStats] = useState<Stats>({});
   const [topFixes, setTopFixes] = useState<Recommendation[]>([]);
@@ -119,7 +120,7 @@ export function App() {
   ], [stats]);
 
   return (
-    <div className="page">
+    <div className={`page theme-${theme}`}>
       <header>
         <h1>PageBlaze — Ops Dashboard</h1>
         <p>UI Block 2: Overview + Issues + Recommendations</p>
@@ -132,15 +133,21 @@ export function App() {
           <button className={tab === 'recommendations' ? 'active' : ''} onClick={() => setTab('recommendations')}>Recommendations</button>
         </div>
 
-        {tab !== 'overview' && (
-          <select value={severity} onChange={(e) => setSeverity(e.target.value as any)}>
-            <option value="all">All severities</option>
-            <option value="critical">Critical</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-          </select>
-        )}
+        <div className="toolbar-right">
+          {tab !== 'overview' && (
+            <select value={severity} onChange={(e) => setSeverity(e.target.value as any)}>
+              <option value="all">All severities</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          )}
+
+          <button className="theme-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+            {theme === 'dark' ? '☀ Light' : '🌙 Dark'}
+          </button>
+        </div>
       </div>
 
       {error && <div className="error">{error}</div>}
