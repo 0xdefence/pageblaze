@@ -175,6 +175,11 @@ PageBlaze/
 - CI now runs workspace build + contracts validation
 - Added contract validation script: `scripts/validate-contracts.mjs`
 
+### Day 14 launch polish
+- Added launch checklist: `docs/LAUNCH_CHECKLIST.md`
+- Added demo prep script: `scripts/demo-day14.sh`
+- Added guided demo route for walkthrough recording
+
 ### Infra
 - Redis
 - Postgres (host port `55432`)

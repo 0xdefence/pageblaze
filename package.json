@@ -19,7 +19,8 @@
     "smoke:day4": "bash scripts/smoke-day4-visual.sh",
     "smoke:day5": "bash scripts/smoke-day5-exports.sh",
     "smoke:day6": "bash scripts/smoke-day6-alerts.sh",
-    "contracts:check": "node scripts/validate-contracts.mjs"
+    "contracts:check": "node scripts/validate-contracts.mjs",
+    "demo:day14": "bash scripts/demo-day14.sh"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
