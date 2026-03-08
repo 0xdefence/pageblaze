@@ -27,6 +27,7 @@ They need one system that says:
 3. Prioritize issues by business impact.
 4. Alert teams quickly via webhook/chat.
 5. Be self-hostable and API-first.
+6. Introduce brand/vibe extraction outputs (colors, visual elements, feel tags) as a productized visual intelligence layer.
 
 ### Non-goals (v1)
 - full enterprise role/permission system
@@ -94,8 +95,22 @@ Minimum checks:
 - capture desktop + mobile screenshots
 - compare against previous baseline
 - output visual diff score + changed regions
+- extract brand/vibe profile signals:
+  - dominant color palette + contrast profile
+  - typography/style consistency hints
+  - media inventory (images/GIF/video)
+  - layout density / whitespace proxy
+  - vibe tags (e.g. minimal, corporate, playful, aggressive)
 
 **Acceptance:** detect major hero/nav/layout changes with low false negatives.
+
+### C.1) Brand Profile Output (v1.1 extension)
+Return a `brand_profile` object per page/site summary:
+- `palette`: top colors + percentages
+- `vibe_tags`: ranked tags with confidence
+- `visual_consistency_score`: 0..1
+- `media_mix`: image/gif/video counts
+- `style_flags`: notable visual shifts vs baseline
 
 ## D) Prioritization Engine
 Score formula:
@@ -136,6 +151,7 @@ Pages:
 - `GET /v1/issues?domain=&severity=`
 - `GET /v1/recommendations?domain=`
 - `GET /v1/visual-diffs?domain=`
+- `GET /v1/brand-profile?domain=&url=` (planned)
 - `POST /v1/alerts/test`
 
 ---

@@ -311,6 +311,9 @@ Optional:
 - `DB_SLOW_MS` (default `250`)
 
 ## Roadmap (Next)
+- brand/vibe profiling module (per-page and site-wide): dominant colors, typography/style consistency, media inventory (images/GIF/video), and layout density signals
+- `brand_profile` API output with vibe tags + visual consistency score
+- screenshot-assisted visual understanding pass for "feel" drift across releases
 - robots/sitemap awareness
 - canonical/dedupe layer
 - persistent document storage
