@@ -165,6 +165,11 @@ PageBlaze/
 - Added readiness endpoints (`/livez`, `/readyz`)
 - Request auth now supports scoped keys in addition to bootstrap admin key
 
+### Day 12 operations + deploy
+- Expanded `/v1/metrics` with crawl/alert queue health, DB ping, and process memory
+- Added deploy runbook: `docs/DEPLOY_RUNBOOK.md`
+- Added incident workflow for alert replay and queue backlog triage
+
 ### Infra
 - Redis
 - Postgres (host port `55432`)

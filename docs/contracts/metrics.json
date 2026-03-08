@@ -1,12 +1,14 @@
 {
   "ok": true,
   "uptimeSec": 1234,
+  "dbPingMs": 3,
   "queue": {
-    "waiting": 0,
-    "active": 1,
-    "completed": 25,
-    "failed": 2,
-    "delayed": 0
+    "crawl": { "waiting": 0, "active": 1, "completed": 25, "failed": 2, "delayed": 0 },
+    "alerts": { "waiting": 0, "active": 0, "completed": 12, "failed": 1, "delayed": 0 }
+  },
+  "process": {
+    "rssMb": 145.2,
+    "heapUsedMb": 62.7
   },
   "dbSlowMsThreshold": 250
 }

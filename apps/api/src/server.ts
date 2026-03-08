@@ -190,11 +190,26 @@ app.get('/v1/stats', async () => {
 });
 
 app.get('/v1/metrics', async () => {
-  const queueCounts = await queue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed');
+  const t0 = Date.now();
+  await q('SELECT 1', [], 'metrics_db_ping');
+  const dbPingMs = Date.now() - t0;
+
+  const [crawlQueue, alertQueueCounts] = await Promise.all([
+    queue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed'),
+    alertQueue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed'),
+  ]);
+
+  const mem = process.memoryUsage();
+
   return {
     ok: true,
     uptimeSec: Math.floor((Date.now() - STARTED_AT) / 1000),
-    queue: queueCounts,
+    dbPingMs,
+    queue: { crawl: crawlQueue, alerts: alertQueueCounts },
+    process: {
+      rssMb: Number((mem.rss / (1024 * 1024)).toFixed(1)),
+      heapUsedMb: Number((mem.heapUsed / (1024 * 1024)).toFixed(1)),
+    },
     dbSlowMsThreshold: DB_SLOW_MS,
   };
 });
