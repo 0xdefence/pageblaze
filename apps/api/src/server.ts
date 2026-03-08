@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import crypto from 'node:crypto';
 import Fastify from 'fastify';
 import { Queue } from 'bullmq';
 import { ZodError, z } from 'zod';
@@ -57,12 +58,32 @@ app.setErrorHandler((err, _req, reply) => {
 });
 
 app.addHook('onRequest', async (req, reply) => {
-  if (req.url === '/healthz') return;
-  const key = req.headers['x-api-key'];
-  if (key !== API_KEY) return reply.status(401).send({ ok: false, error: 'unauthorized' });
+  if (req.url === '/healthz' || req.url === '/livez' || req.url === '/readyz') return;
+
+  const key = String(req.headers['x-api-key'] || '');
+  if (!key) return reply.status(401).send({ ok: false, error: 'unauthorized' });
+
+  // bootstrap admin key (full access)
+  if (key === API_KEY) return;
+
+  const requiredScope = req.method === 'GET' ? 'read' : 'write';
+  const r = await q('SELECT scopes_json, enabled FROM api_keys WHERE token=$1 LIMIT 1', [key], 'auth_lookup_key');
+  if (!r.rowCount) return reply.status(401).send({ ok: false, error: 'unauthorized' });
+
+  const row = r.rows[0];
+  if (!row.enabled) return reply.status(403).send({ ok: false, error: 'key_disabled' });
+  const scopes: string[] = Array.isArray(row.scopes_json) ? row.scopes_json : [];
+  if (!scopes.includes(requiredScope) && !scopes.includes('admin')) {
+    return reply.status(403).send({ ok: false, error: 'insufficient_scope', requiredScope });
+  }
 });
 
 app.get('/healthz', async () => ({ ok: true }));
+app.get('/livez', async () => ({ ok: true }));
+app.get('/readyz', async () => {
+  await q('SELECT 1', [], 'readyz_db_ping');
+  return { ok: true };
+});
 
 const scrapeSchema = z.object({
   url: z.string().url(),
@@ -204,6 +225,28 @@ app.get('/v1/alerts/endpoints', async (req) => {
   );
   const total = await q('SELECT COUNT(*)::int AS count FROM alert_endpoints', [], 'alerts_count_endpoints');
   return { ok: true, endpoints: res.rows, page: { limit, offset, total: total.rows[0]?.count ?? 0 } };
+});
+
+app.post('/v1/auth/keys', async (req, reply) => {
+  const body = z.object({ name: z.string().min(1), scopes: z.array(z.enum(['read', 'write', 'admin'])).min(1).default(['read']) }).parse(req.body || {});
+  const token = `pb_${crypto.randomUUID().replace(/-/g, '')}`;
+  const res = await q(
+    `INSERT INTO api_keys (name, token, scopes_json, enabled)
+     VALUES ($1, $2, $3::jsonb, true)
+     RETURNING id, name, scopes_json, enabled, created_at`,
+    [body.name, token, JSON.stringify(body.scopes)],
+    'auth_create_key'
+  );
+  return reply.status(201).send({ ok: true, key: { ...res.rows[0], token } });
+});
+
+app.get('/v1/auth/keys', async () => {
+  const res = await q(
+    `SELECT id, name, scopes_json, enabled, created_at FROM api_keys ORDER BY id DESC LIMIT 200`,
+    [],
+    'auth_list_keys'
+  );
+  return { ok: true, keys: res.rows };
 });
 
 app.get('/v1/alerts/events', async (req) => {

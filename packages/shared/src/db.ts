@@ -54,6 +54,7 @@ export async function verifySchema() {
     'visual_diffs',
     'alert_endpoints',
     'alert_events',
+    'api_keys',
   ];
 
   const res = await db.query(

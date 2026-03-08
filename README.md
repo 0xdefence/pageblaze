@@ -29,6 +29,8 @@ PageBlaze/
 
 ### API
 - `GET /healthz`
+- `GET /livez`
+- `GET /readyz`
 - `POST /v1/scrape`
 - `POST /v1/crawl`
 - `GET /v1/jobs/:id`
@@ -49,6 +51,8 @@ PageBlaze/
 - `POST /v1/alerts/test`
 - `POST /v1/alerts/retry/:eventId`
 - `GET /v1/alerts/events`
+- `POST /v1/auth/keys`
+- `GET /v1/auth/keys`
 - `GET /v1/crawls`
 - `GET /v1/crawls/:id`
 - `GET /v1/crawls/:id/pages`
@@ -154,6 +158,12 @@ PageBlaze/
 - Split dedicated alert queue namespace (`pageblaze-alerts`)
 - Added dedupe hash on alert events for idempotent delivery writes
 - Added failed alert replay endpoint: `POST /v1/alerts/retry/:eventId`
+
+### Day 11 auth + readiness
+- Added scoped API keys table (`api_keys`) with `read/write/admin` scopes
+- Added key management endpoints (`POST/GET /v1/auth/keys`)
+- Added readiness endpoints (`/livez`, `/readyz`)
+- Request auth now supports scoped keys in addition to bootstrap admin key
 
 ### Infra
 - Redis
