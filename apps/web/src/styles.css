@@ -1,10 +1,14 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap');
+
 :root {
   --amber: #ff9f1a;
   --amber-soft: #ffbe5c;
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Space Grotesk', var(--font-ui);
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; font-family: Inter, system-ui, sans-serif; }
+body { margin: 0; font-family: var(--font-ui); }
 
 .page {
   max-width: 1220px;
@@ -37,8 +41,8 @@ body { margin: 0; font-family: Inter, system-ui, sans-serif; }
   --danger-border: #e2a1a1;
 }
 
-header h1 { margin: 0 0 6px; letter-spacing: -0.02em; }
-header p { margin: 0 0 18px; color: var(--muted); }
+header h1 { margin: 0 0 6px; letter-spacing: -0.02em; font-family: var(--font-display); font-weight: 700; }
+header p { margin: 0 0 18px; color: var(--muted); font-weight: 500; }
 
 .toolbar {
   display: flex;
@@ -92,7 +96,7 @@ select,
 }
 
 .label { color: var(--muted); font-size: 12px; }
-.value { font-size: 30px; font-weight: 700; margin-top: 6px; letter-spacing: -0.02em; }
+.value { font-size: 30px; font-weight: 700; margin-top: 6px; letter-spacing: -0.02em; font-family: var(--font-display); }
 
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .panel {
@@ -103,7 +107,7 @@ select,
   overflow: auto;
 }
 .panel.full { min-height: 60vh; }
-.panel h2 { margin: 0 0 10px; font-size: 16px; color: var(--amber-soft); }
+.panel h2 { margin: 0 0 10px; font-size: 16px; color: var(--amber-soft); font-family: var(--font-display); font-weight: 600; }
 
 table { width: 100%; border-collapse: collapse; }
 th, td {
