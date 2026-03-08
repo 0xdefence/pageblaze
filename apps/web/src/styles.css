@@ -56,6 +56,7 @@ tr:hover td { background: color-mix(in oklab, var(--panel) 70%, var(--amber) 6%)
 .sev.low { background: #153626; color: #9ef3c8; }
 
 .empty { color: var(--muted); padding: 10px; border: 1px dashed var(--border); border-radius: 10px; }
+.alert-form { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 
 button:focus-visible, select:focus-visible, input:focus-visible {
   outline: 2px solid var(--amber);
